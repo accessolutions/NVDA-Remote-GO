@@ -1,0 +1,20 @@
+# This is a sample systemd service file.
+# Modify the values for the exec parameter,
+# user, group, and output for standard output and standard error.
+[Unit]
+Description=NVDARemote server
+After=network.target
+
+[Service]
+Type=simple
+User=sample
+Group=sample
+ExecStart=/home/sample/bin/nvdaRemoteServer -cert-file /home/sample/nvdaRemoteServer/cert.crt -key-file /home/sample/nvdaRemoteServer/cert.key -log-level=3
+StandardOutput=append:/home/sample/nvdaRemoteServer/stdout.log
+StandardError=append:/home/sample/nvdaRemoteServer/stderr.log
+Restart=always
+RestartSec=10s
+TimeoutStopSec=10s
+
+[Install]
+WantedBy=multi-user.target

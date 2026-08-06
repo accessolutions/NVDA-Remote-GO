@@ -1,0 +1,63 @@
+version: 2
+project_name: nvdaRemoteServer
+before:
+  hooks:
+    - go mod download
+builds:
+  -
+    env:
+      - CGO_ENABLED=0
+    binary: nvdaRemoteServer
+    flags:
+      - -trimpath
+    ldflags:
+      - -w -s -X main.Version={{.Tag}}
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - 386
+      - amd64
+      - arm
+      - arm64
+    goarm:
+      - 5
+      - 6
+      - 7
+    ignore:
+      - goos: darwin
+        goarch: 386
+      - goos: windows
+        goarch: arm
+archives:
+  -
+    format_overrides:
+      - goos: windows
+        formats: zip
+      - goos: darwin
+        formats: zip
+    files:
+      - LICENSE
+      - README.MD
+      - systemd/*
+      - cert.pem
+    wrap_in_directory: true
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}{{ if .Mips }}_{{ .Mips }}{{ end }}"
+checksum:
+  name_template: 'checksums.txt'
+snapshot:
+  version_template: "{{ .Tag }}-next"
+signs:
+  - artifacts: checksum
+    args: ["--batch", "-u", "{{ .Env.GPG_FINGERPRINT }}", "--output", "${signature}", "--detach-sign", "${artifact}"]
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^release:'
+source:
+  enabled: true
+  name_template: "{{ .ProjectName }}_source"
+  format: "tar.gz"
