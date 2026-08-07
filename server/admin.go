@@ -29,6 +29,7 @@ var (
 	adminEnabled      bool
 	adminPasswordFile string
 	adminPath         = DEFAULT_ADMIN_PATH
+	geoIPAPIURL       = DEFAULT_GEOIP_API_URL
 )
 
 // adminMinPasswordLen is the minimum length accepted for the admin password.
@@ -175,6 +176,7 @@ func checkAdminCredentials(user, password string) bool {
 type adminClientInfo struct {
 	ID          int    `json:"id"`
 	IP          string `json:"ip"`
+	Location    string `json:"location"`
 	Port        int    `json:"port"`
 	Protocol    string `json:"protocol"`
 	Role        string `json:"role"`
@@ -242,10 +244,12 @@ func buildAdminSnapshot() adminSnapshot {
 		if ch := c.GetChannel(); ch != nil {
 			channelName = ch.Name()
 		}
+		ip := c.GetIP()
 		connectedAt := c.GetConnectedAt()
 		infos = append(infos, adminClientInfo{
 			ID:          c.GetID(),
-			IP:          c.GetIP(),
+			IP:          ip,
+			Location:    geoLocationForIP(ip),
 			Port:        c.GetPort(),
 			Protocol:    c.GetProtocol(),
 			Role:        roleLabel(c.GetConnectionType()),
@@ -605,7 +609,7 @@ func adminLoginHTML(failed bool) string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TeleNVDA - Connexion administration</title>
+<title>NVDA REMOTE GO Accessolutions - Connexion administration</title>
 <style>
 body{font-family:system-ui,Arial,sans-serif;background:#0f1720;color:#e6edf3;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}
 .card{background:#161f2b;padding:2rem;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.4);width:320px}
@@ -619,7 +623,7 @@ button:hover{background:#1d4ed8}
 </head>
 <body>
 <main class="card">
-<h1>Administration TeleNVDA</h1>
+<h1>Administration NVDA REMOTE GO Accessolutions</h1>
 ` + errBlock + `
 <form method="post" action="` + html.EscapeString(adminPath) + `/login">
 <label for="username">Nom d'utilisateur</label>
@@ -643,7 +647,7 @@ func adminSetupHTML(errMsg string) string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TeleNVDA - Première configuration</title>
+<title>NVDA REMOTE GO Accessolutions - Première configuration</title>
 <style>
 body{font-family:system-ui,Arial,sans-serif;background:#0f1720;color:#e6edf3;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}
 .card{background:#161f2b;padding:2rem;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.4);width:340px}
@@ -678,7 +682,7 @@ var adminDashboardHTML = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TeleNVDA - Tableau de bord</title>
+<title>NVDA REMOTE GO Accessolutions</title>
 <style>
 body{font-family:system-ui,Arial,sans-serif;background:#0f1720;color:#e6edf3;margin:0;padding:1.5rem}
 header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem}
@@ -701,7 +705,7 @@ tr:hover td{background:#1b2534}
 </head>
 <body>
 <header>
-<h1>Tableau de bord TeleNVDA</h1>
+<h1>NVDA REMOTE GO Accessolutions</h1>
 <a class="logout" href="ADMINPATH/logout">Se déconnecter</a>
 </header>
 <section class="stats">
@@ -715,6 +719,7 @@ tr:hover td{background:#1b2534}
 <tr>
 <th scope="col">ID</th>
 <th scope="col">Adresse IP</th>
+<th scope="col">Localisation</th>
 <th scope="col">Port</th>
 <th scope="col">Protocole</th>
 <th scope="col">Rôle</th>
@@ -723,7 +728,7 @@ tr:hover td{background:#1b2534}
 <th scope="col">Durée</th>
 </tr>
 </thead>
-<tbody id="clients"><tr><td colspan="8" class="muted">Chargement…</td></tr></tbody>
+<tbody id="clients"><tr><td colspan="9" class="muted">Chargement…</td></tr></tbody>
 </table>
 <p class="updated">Dernière mise à jour : <span id="updated">-</span></p>
 <script>
@@ -735,13 +740,14 @@ function render(d){
 	document.getElementById('stat-cpu').textContent=d.cpu_ok?(d.cpu_pct.toFixed(1)+' %'):'indisponible';
 	document.getElementById('updated').textContent=d.timestamp;
 	var tb=document.getElementById('clients');
-	if(!d.clients||d.clients.length===0){tb.innerHTML='<tr><td colspan="8" class="muted">Aucune connexion active.</td></tr>';return;}
+	if(!d.clients||d.clients.length===0){tb.innerHTML='<tr><td colspan="9" class="muted">Aucune connexion active.</td></tr>';return;}
 	var rows='';
 	for(var i=0;i<d.clients.length;i++){
 		var c=d.clients[i];
 		rows+='<tr>'+
 			'<td>'+esc(c.id)+'</td>'+
 			'<td>'+esc(c.ip)+'</td>'+
+			'<td>'+esc(c.location)+'</td>'+
 			'<td>'+esc(c.port)+'</td>'+
 			'<td>'+esc(c.protocol)+'</td>'+
 			'<td class="'+roleClass(c.role)+'">'+esc(c.role)+'</td>'+

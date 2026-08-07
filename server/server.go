@@ -16,14 +16,18 @@ var (
 
 func AddClient(c *Client) {
 	sl.Lock()
-	defer sl.Unlock()
 	lastID++
 	c.SetID(lastID)
 	if clients == nil {
 		clients = make(map[*Client]struct{})
 	}
 	clients[c] = struct{}{}
-	Log(LOG_CONNECTION, "Client "+strconv.Itoa(lastID)+" has connected from "+c.GetIP())
+	ip := c.GetIP()
+	Log(LOG_CONNECTION, "Client "+strconv.Itoa(lastID)+" has connected from "+ip)
+	sl.Unlock()
+	if AdminEnabled() {
+		requestGeoLocation(ip)
+	}
 }
 
 func FindClient(c *Client) bool {

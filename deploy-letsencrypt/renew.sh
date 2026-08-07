@@ -2,7 +2,8 @@
 # =============================================================================
 # renew.sh
 # -----------------------------------------------------------------------------
-# Renouvelle le certificat Let's Encrypt de nvdaremote.accessolutions.fr si necessaire,
+# Renouvelle le certificat Let's Encrypt de nvdaremote.accessolutions.fr et
+# remote.accessolutions.fr si necessaire,
 # puis redemarre le conteneur nvdaremote uniquement en cas de renouvellement
 # effectif (le serveur Go lit le certificat au demarrage).
 #

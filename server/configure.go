@@ -91,6 +91,7 @@ func Configure() error {
 	flag.BoolVar(&adminEnabled, "admin", DEFAULT_ADMIN, "Enable the web administration dashboard. The login is fixed to \"administrator\" and the password is defined on the first connection to the dashboard. The dashboard requires a WebSocket listener (-ws-address) to be reachable.")
 	flag.StringVar(&adminPasswordFile, "admin-password-file", DEFAULT_ADMIN_PASSWORD_FILE, "Path to the file used to store the bcrypt-hashed admin password so it survives restarts. If empty, the password is kept in memory only and must be set again after each restart. Use a path on a persistent volume when running in a container.")
 	flag.StringVar(&adminPath, "admin-path", DEFAULT_ADMIN_PATH, "URL path on which the web administration dashboard is served, such as \"/admin\".")
+	flag.StringVar(&geoIPAPIURL, "geoip-api-url", DEFAULT_GEOIP_API_URL, "Base URL of the IP geolocation API used by the admin dashboard. Set it to empty to disable geolocation.")
 
 	flag.Parse()
 

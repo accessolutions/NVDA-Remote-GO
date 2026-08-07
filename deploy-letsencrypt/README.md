@@ -1,14 +1,16 @@
-# Certificat Let's Encrypt pour nvdaremote.accessolutions.fr (serveur NVDA Remote)
+# Certificat Let's Encrypt pour nvdaremote.accessolutions.fr et remote.accessolutions.fr (serveur NVDA Remote)
 
 Cette procédure fait servir au serveur NVDA Remote un **certificat TLS signé par
-Let's Encrypt** pour le domaine `nvdaremote.accessolutions.fr`, au lieu du certificat
+Let's Encrypt** pour les domaines `nvdaremote.accessolutions.fr` et
+`remote.accessolutions.fr`, au lieu du certificat
 auto-signé par défaut. Certains proxies exigent un **nom de domaine** avec un
 certificat validé par une autorité reconnue ; se connecter à
-`nvdaremote.accessolutions.fr` (et non à une adresse IP) résout ce problème.
+`nvdaremote.accessolutions.fr` ou `remote.accessolutions.fr` (et non à une adresse IP)
+résout ce problème.
 
 ## État déployé (serveur `sd-david`, 31/07/2026)
 
-- Domaine : `nvdaremote.accessolutions.fr` (DNS OK).
+- Domaines : `nvdaremote.accessolutions.fr` et `remote.accessolutions.fr` (DNS OK).
 - Le conteneur `nvdaremote` (image `nvdaremoteserver-docker`) écoute en TLS
   signé sur **6837** (TLS brut) et **443** (WebSocket sécurisé, `-ws-address :443`).
 - Certificat Let's Encrypt stocké dans le volume Docker `le-etc`
@@ -43,7 +45,8 @@ La validation Let's Encrypt (challenge **HTTP-01**) passe par ce webroot Apache 
 
 ## Réexécuter / adapter
 
-Ajustez les variables en tête de `deploy-letsencrypt.sh` (`DOMAIN`, `EMAIL`,
+Ajustez les variables en tête de `deploy-letsencrypt.sh` (`DOMAIN`,
+`ADDITIONAL_DOMAIN`, `EMAIL`,
 `WEBROOT`, `SERVER_ARGS`, `SERVER_PORTS`) puis :
 
 ```sh
@@ -78,9 +81,11 @@ echo | openssl s_client -connect nvdaremote.accessolutions.fr:443 -servername nv
   | openssl x509 -noout -issuer -dates
 ```
 
-Résultat attendu : `issuer = Let's Encrypt`, `subject = nvdaremote.accessolutions.fr`.
+Résultat attendu : `issuer = Let's Encrypt`, avec les deux noms présents dans
+`subjectAltName`.
 
 ## Côté client (add-on NVDA)
 
-Utilisez l'hôte **`nvdaremote.accessolutions.fr`** (et non l'adresse IP), port `6837`
+Utilisez l'hôte **`nvdaremote.accessolutions.fr`** ou
+**`remote.accessolutions.fr`** (et non l'adresse IP), port `6837`
 (ou `443` pour le transport WebSocket sécurisé selon la configuration du client).

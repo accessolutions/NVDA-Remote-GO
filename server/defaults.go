@@ -62,6 +62,7 @@ var (
 	DEFAULT_ADMIN               bool   = false
 	DEFAULT_ADMIN_PASSWORD_FILE string = ""
 	DEFAULT_ADMIN_PATH          string = "/admin"
+	DEFAULT_GEOIP_API_URL       string = "https://ipwho.is"
 )
 
 func init() {

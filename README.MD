@@ -134,7 +134,7 @@ The included certificate file is a single file that contains an automatically ge
 # Usage
 
 ```console
-$ nvdaRemoteServer [-pid-file /path/to/pid/file] [-conf-file /path/to/configuration/file] [-conf-read=true] [-gen-conf-file /path/to/generated/configuration/file] [-gen-conf-dir=false] [-create=false] [-address :6837] [-cert-file /path/to/ssl/certificate] [-key-file /path/to/ssl/key] [-gen-cert-file /path/to/created/cert/file] [-motd "Example message of the day."] [-motd-always-display=false] [-send-origin=true] [-log-level=0] [-log-file /path/to/log/file] [-launch=true]
+$ nvdaRemoteServer [-pid-file /path/to/pid/file] [-conf-file /path/to/configuration/file] [-conf-read=true] [-gen-conf-file /path/to/generated/configuration/file] [-gen-conf-dir=false] [-create=false] [-address :6837] [-cert-file /path/to/ssl/certificate] [-key-file /path/to/ssl/key] [-gen-cert-file /path/to/created/cert/file] [-motd "Example message of the day."] [-motd-always-display=false] [-send-origin=true] [-log-level=0] [-log-file /path/to/log/file] [-admin=false] [-admin-path /admin] [-geoip-api-url https://ipwho.is] [-launch=true]
 ```
 
 Please note that the brackets around a parameter indicate that it is optional.
@@ -290,6 +290,23 @@ Each level above the previous will also log what the prior level is logging. For
 #### `-launch`
 
 By default, the server will attempt to launch itself if nothing has caused it to abort execution prematurely. If you set this parameter to false, the server will shut down immediately after most configuration is complete. This can be useful if you only wanted to generate a self-signed certificate and write it to a file, for instance.
+
+
+#### `-admin`
+
+Enable the web administration dashboard. The dashboard is served by the secure WebSocket listener and is available at `/admin` by default. The fixed username is `administrator`; the password is defined during the first connection and can be persisted with `-admin-password-file`.
+
+
+#### `-admin-path`
+
+Change the URL path of the web administration dashboard. The default path is `/admin`.
+
+
+#### `-geoip-api-url`
+
+Configure the base URL of the IP geolocation API used by the administration dashboard. The default is `https://ipwho.is`. For each public client IP, the dashboard can display the city, region and country in one `Localisation` column. Lookups are asynchronous and cached for 24 hours, so they do not delay client connections and repeated connections do not consume one request each.
+
+Set this parameter to an empty value to disable geolocation. Private, local and invalid IP addresses are never sent to the API. IP geolocation is approximate and must not be considered an exact physical address.
 
 
 ## Other parameters
