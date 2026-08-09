@@ -134,7 +134,7 @@ The included certificate file is a single file that contains an automatically ge
 # Usage
 
 ```console
-$ nvdaRemoteServer [-pid-file /path/to/pid/file] [-conf-file /path/to/configuration/file] [-conf-read=true] [-gen-conf-file /path/to/generated/configuration/file] [-gen-conf-dir=false] [-create=false] [-address :6837] [-cert-file /path/to/ssl/certificate] [-key-file /path/to/ssl/key] [-gen-cert-file /path/to/created/cert/file] [-motd "Example message of the day."] [-motd-always-display=false] [-send-origin=true] [-screen-share=false] [-turn-url stun:turn.example.com:3478] [-turn-secret secret] [-turn-ttl 3600] [-log-level=0] [-log-file /path/to/log/file] [-admin=false] [-admin-path /admin] [-geoip-api-url https://ipwho.is] [-launch=true]
+$ nvdaRemoteServer [-pid-file /path/to/pid/file] [-conf-file /path/to/configuration/file] [-conf-read=true] [-gen-conf-file /path/to/generated/configuration/file] [-gen-conf-dir=false] [-create=false] [-address :6837] [-cert-file /path/to/ssl/certificate] [-key-file /path/to/ssl/key] [-gen-cert-file /path/to/created/cert/file] [-motd "Example message of the day."] [-motd-always-display=false] [-send-origin=true] [-screen-share=false] [-turn-url stun:turn.example.com:3478] [-turn-secret secret] [-turn-secret-file /path/to/turn/secret] [-turn-ttl 3600] [-log-level=0] [-log-file /path/to/log/file] [-admin=false] [-admin-path /admin] [-geoip-api-url https://ipwho.is] [-launch=true]
 ```
 
 Please note that the brackets around a parameter indicate that it is optional.
@@ -288,6 +288,15 @@ The shared secret used to derive ephemeral TURN credentials. It must match the `
 The secret itself is never sent to clients. Each client receives a username and password that expire, which prevents your TURN server from being used as an open relay.
 
 Prefer setting this through a configuration file, since command line parameters are visible to other users of the machine through the process list.
+
+
+#### `-turn-secret-file`
+
+Read the shared TURN secret from a file instead of passing it on the command line or storing it in the configuration file. Leading and trailing whitespace is stripped.
+
+This is the recommended way of providing the secret. The file is read once at startup, and the server refuses to start if the file is missing or empty. Restrict its permissions so that only the account running the server can read it.
+
+When both `-turn-secret` and `-turn-secret-file` are given, the file takes precedence.
 
 
 #### `-turn-ttl`
