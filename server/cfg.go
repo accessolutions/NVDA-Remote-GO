@@ -21,6 +21,7 @@ type Cfg struct {
 	ScreenShare       bool        `json:"screen_share"`
 	TurnUrls          StringList  `json:"turn_urls"`
 	TurnSecret        string      `json:"turn_secret"`
+	TurnSecretFile    string      `json:"turn_secret_file"`
 	TurnTtl           int         `json:"turn_ttl"`
 	ll                []int
 	ls                [][]interface{}
@@ -42,6 +43,7 @@ func cfg_default() *Cfg {
 		ScreenShare:       DEFAULT_SCREEN_SHARE,
 		TurnUrls:          DEFAULT_TURN_URLS,
 		TurnSecret:        DEFAULT_TURN_SECRET,
+		TurnSecretFile:    DEFAULT_TURN_SECRET_FILE,
 		TurnTtl:           DEFAULT_TURN_TTL,
 		ll:                make([]int, 0),
 		ls:                make([][]interface{}, 0),
@@ -84,6 +86,9 @@ func (c *Cfg) IsDefault() bool {
 		return false
 	}
 	if !default_turn_secret(c.TurnSecret) {
+		return false
+	}
+	if !default_turn_secret_file(c.TurnSecretFile) {
 		return false
 	}
 	if !default_turn_ttl(c.TurnTtl) {
@@ -254,6 +259,7 @@ func (c *Cfg) CmdGet() {
 	c.ScreenShare = screenShare
 	c.TurnUrls = turnUrls
 	c.TurnSecret = turnSecret
+	c.TurnSecretFile = turnSecretFile
 	c.TurnTtl = turnTtl
 }
 
@@ -293,6 +299,9 @@ func (c *Cfg) CmdSet() {
 	}
 	if !default_turn_secret(c.TurnSecret) && default_turn_secret(turnSecret) {
 		turnSecret = c.TurnSecret
+	}
+	if !default_turn_secret_file(c.TurnSecretFile) && default_turn_secret_file(turnSecretFile) {
+		turnSecretFile = c.TurnSecretFile
 	}
 	if !default_turn_ttl(c.TurnTtl) && default_turn_ttl(turnTtl) {
 		turnTtl = c.TurnTtl

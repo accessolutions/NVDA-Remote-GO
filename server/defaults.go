@@ -53,10 +53,11 @@ var (
 var DEFAULT_SEND_ORIGIN bool = true
 
 var (
-	DEFAULT_SCREEN_SHARE bool       = false
-	DEFAULT_TURN_URLS    StringList = nil
-	DEFAULT_TURN_SECRET  string     = ""
-	DEFAULT_TURN_TTL     int        = 3600
+	DEFAULT_SCREEN_SHARE     bool       = false
+	DEFAULT_TURN_URLS        StringList = nil
+	DEFAULT_TURN_SECRET      string     = ""
+	DEFAULT_TURN_SECRET_FILE string     = ""
+	DEFAULT_TURN_TTL         int        = 3600
 )
 
 var DEFAULT_CREATE_DIR bool = false
@@ -140,6 +141,10 @@ func default_turn_urls(p StringList) bool {
 
 func default_turn_secret(p string) bool {
 	return (p == DEFAULT_TURN_SECRET)
+}
+
+func default_turn_secret_file(p string) bool {
+	return (p == DEFAULT_TURN_SECRET_FILE)
 }
 
 func default_turn_ttl(p int) bool {

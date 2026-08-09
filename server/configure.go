@@ -41,10 +41,11 @@ var motdAlwaysDisplay bool
 var sendOrigin bool
 
 var (
-	screenShare bool
-	turnUrls    StringList
-	turnSecret  string
-	turnTtl     int
+	screenShare    bool
+	turnUrls       StringList
+	turnSecret     string
+	turnSecretFile string
+	turnTtl        int
 )
 
 var createDir bool
@@ -95,7 +96,8 @@ func Configure() error {
 
 	flag.BoolVar(&screenShare, "screen-share", DEFAULT_SCREEN_SHARE, "Enable relaying of WebRTC screen sharing signaling between clients that advertise the matching capability. Media never transits through the server. Disabled by default.")
 	flag.Var(&turnUrls, "turn-url", "A STUN or TURN URL handed to clients requesting ICE servers, such as \"stun:turn.example.com:3478\" or \"turn:turn.example.com:3478?transport=udp\". You can declare this parameter more than once. Requires -screen-share.")
-	flag.StringVar(&turnSecret, "turn-secret", DEFAULT_TURN_SECRET, "Shared secret used to derive ephemeral TURN credentials, matching the static-auth-secret of your coturn server. The secret is never sent to clients. Prefer setting it through a configuration file rather than the command line.")
+	flag.StringVar(&turnSecret, "turn-secret", DEFAULT_TURN_SECRET, "Shared secret used to derive ephemeral TURN credentials, matching the static-auth-secret of your coturn server. The secret is never sent to clients. Prefer -turn-secret-file, since command line parameters are visible to other users of the machine.")
+	flag.StringVar(&turnSecretFile, "turn-secret-file", DEFAULT_TURN_SECRET_FILE, "Path to a file holding the shared secret used to derive ephemeral TURN credentials. This is preferred over -turn-secret, which exposes the secret in the process list. Leading and trailing whitespace is stripped.")
 	flag.IntVar(&turnTtl, "turn-ttl", DEFAULT_TURN_TTL, "Lifetime in seconds of the ephemeral TURN credentials handed to clients.")
 
 	flag.BoolVar(&Launch, "launch", DEFAULT_LAUNCH, "Launch the server.")
@@ -116,16 +118,6 @@ func Configure() error {
 		Log(LOG_INFO, "Warning: admin dashboard is enabled but no WebSocket listener (-ws-address) is configured, so the dashboard will not be reachable.")
 	}
 
-	if !screenShare && (len(turnUrls) > 0 || !default_turn_secret(turnSecret)) {
-		Log(LOG_INFO, "Warning: TURN parameters are set but screen sharing is disabled, so they will be ignored. Add -screen-share to enable it.")
-	}
-	if screenShare && len(turnUrls) == 0 {
-		Log(LOG_INFO, "Warning: screen sharing is enabled but no -turn-url is configured. Clients will have to rely on a direct peer to peer connection, which fails on restrictive networks.")
-	}
-	if screenShare && turn_needs_secret(turnUrls) && default_turn_secret(turnSecret) {
-		Log(LOG_INFO, "Warning: a TURN URL is configured but no -turn-secret is set, so no credentials will be handed to clients and the TURN server will reject them.")
-	}
-
 	c := cfg_default()
 	cfg_err := c.Setup()
 
@@ -141,6 +133,24 @@ func Configure() error {
 	if cfg_err != nil {
 		Log_close()
 		os.Exit(1)
+	}
+
+	if !screenShare && (len(turnUrls) > 0 || !default_turn_secret(turnSecret) || !default_turn_secret_file(turnSecretFile)) {
+		Log(LOG_INFO, "Warning: TURN parameters are set but screen sharing is disabled, so they will be ignored. Add -screen-share to enable it.")
+	}
+	if screenShare {
+		if !default_turn_secret_file(turnSecretFile) {
+			if err := turn_secret_load(turnSecretFile); err != nil {
+				Log_error("Unable to read the TURN secret file at " + turnSecretFile + "\n" + err.Error())
+			}
+		}
+		if len(turnUrls) == 0 {
+			Log(LOG_INFO, "Warning: screen sharing is enabled but no STUN or TURN URL is configured. Clients will have to rely on a direct peer to peer connection, which fails on restrictive networks.")
+		}
+		if turn_needs_secret(turnUrls) && default_turn_secret(turnSecret) {
+			Log(LOG_INFO, "Warning: a TURN URL is configured but no shared secret is set, so no credentials will be handed to clients and the TURN server will reject them.")
+		}
+		Log(LOG_INFO, "Screen sharing signaling is enabled. Media never transits through this server.")
 	}
 
 	defer PanicHandle.Catch()

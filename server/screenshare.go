@@ -81,6 +81,21 @@ func turn_needs_secret(urls StringList) bool {
 	return false
 }
 
+// turn_secret_load reads the shared TURN secret from a file, which keeps it out
+// of the process list where command line parameters are visible to other users.
+func turn_secret_load(file string) error {
+	data, err := file_read(fullPath(file))
+	if err != nil {
+		return err
+	}
+	secret := strings.TrimSpace(string(data))
+	if secret == "" {
+		return errors.New("The TURN secret file is empty.")
+	}
+	turnSecret = secret
+	return nil
+}
+
 // ScreenShareEnabled reports whether screen sharing signaling is relayed.
 func ScreenShareEnabled() bool {
 	return screenShare
