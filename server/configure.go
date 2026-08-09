@@ -40,6 +40,13 @@ var motdAlwaysDisplay bool
 
 var sendOrigin bool
 
+var (
+	screenShare bool
+	turnUrls    StringList
+	turnSecret  string
+	turnTtl     int
+)
+
 var createDir bool
 
 var Launch bool
@@ -86,6 +93,11 @@ func Configure() error {
 
 	flag.BoolVar(&sendOrigin, "send-origin", DEFAULT_SEND_ORIGIN, "Send an origin message from every message received by a client.")
 
+	flag.BoolVar(&screenShare, "screen-share", DEFAULT_SCREEN_SHARE, "Enable relaying of WebRTC screen sharing signaling between clients that advertise the matching capability. Media never transits through the server. Disabled by default.")
+	flag.Var(&turnUrls, "turn-url", "A STUN or TURN URL handed to clients requesting ICE servers, such as \"stun:turn.example.com:3478\" or \"turn:turn.example.com:3478?transport=udp\". You can declare this parameter more than once. Requires -screen-share.")
+	flag.StringVar(&turnSecret, "turn-secret", DEFAULT_TURN_SECRET, "Shared secret used to derive ephemeral TURN credentials, matching the static-auth-secret of your coturn server. The secret is never sent to clients. Prefer setting it through a configuration file rather than the command line.")
+	flag.IntVar(&turnTtl, "turn-ttl", DEFAULT_TURN_TTL, "Lifetime in seconds of the ephemeral TURN credentials handed to clients.")
+
 	flag.BoolVar(&Launch, "launch", DEFAULT_LAUNCH, "Launch the server.")
 
 	flag.BoolVar(&adminEnabled, "admin", DEFAULT_ADMIN, "Enable the web administration dashboard. The login is fixed to \"administrator\" and the password is defined on the first connection to the dashboard. The dashboard requires a WebSocket listener (-ws-address) to be reachable.")
@@ -102,6 +114,16 @@ func Configure() error {
 
 	if AdminEnabled() && len(wsAddresses) == 0 {
 		Log(LOG_INFO, "Warning: admin dashboard is enabled but no WebSocket listener (-ws-address) is configured, so the dashboard will not be reachable.")
+	}
+
+	if !screenShare && (len(turnUrls) > 0 || !default_turn_secret(turnSecret)) {
+		Log(LOG_INFO, "Warning: TURN parameters are set but screen sharing is disabled, so they will be ignored. Add -screen-share to enable it.")
+	}
+	if screenShare && len(turnUrls) == 0 {
+		Log(LOG_INFO, "Warning: screen sharing is enabled but no -turn-url is configured. Clients will have to rely on a direct peer to peer connection, which fails on restrictive networks.")
+	}
+	if screenShare && turn_needs_secret(turnUrls) && default_turn_secret(turnSecret) {
+		Log(LOG_INFO, "Warning: a TURN URL is configured but no -turn-secret is set, so no credentials will be handed to clients and the TURN server will reject them.")
 	}
 
 	c := cfg_default()

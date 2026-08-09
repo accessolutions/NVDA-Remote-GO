@@ -52,6 +52,13 @@ var (
 
 var DEFAULT_SEND_ORIGIN bool = true
 
+var (
+	DEFAULT_SCREEN_SHARE bool       = false
+	DEFAULT_TURN_URLS    StringList = nil
+	DEFAULT_TURN_SECRET  string     = ""
+	DEFAULT_TURN_TTL     int        = 3600
+)
+
 var DEFAULT_CREATE_DIR bool = false
 
 var DEFAULT_LAUNCH bool = true
@@ -121,6 +128,22 @@ func default_motd_always_display(p bool) bool {
 
 func default_send_origin(p bool) bool {
 	return (p == DEFAULT_SEND_ORIGIN)
+}
+
+func default_screen_share(p bool) bool {
+	return (p == DEFAULT_SCREEN_SHARE)
+}
+
+func default_turn_urls(p StringList) bool {
+	return (len(p) == 0)
+}
+
+func default_turn_secret(p string) bool {
+	return (p == DEFAULT_TURN_SECRET)
+}
+
+func default_turn_ttl(p int) bool {
+	return (p == DEFAULT_TURN_TTL)
 }
 
 func default_gen_conf_file(p string) bool {

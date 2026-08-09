@@ -97,6 +97,7 @@ func (c *ClientChannel) Add(client *Client, password string) {
 		Client: &ClientData{
 			ID:             id,
 			ConnectionType: connection,
+			Capabilities:   client.GetCapabilities(),
 		},
 	}
 	enc, encerr := Encode(scdb)
@@ -123,6 +124,7 @@ func (c *ClientChannel) Add(client *Client, password string) {
 			scdb.Clients = append(scdb.Clients, ClientData{
 				ID:             cid,
 				ConnectionType: ctype,
+				Capabilities:   cc.GetCapabilities(),
 			})
 		}
 		if len(scdb.UserIds) == 0 {
@@ -291,6 +293,18 @@ func (c *ClientChannel) Name() string {
 	c.Lock()
 	defer c.Unlock()
 	return c.name
+}
+
+// FindClientByID returns the client holding the given id within this channel,
+// or nil when no such client is connected to it.
+func (c *ClientChannel) FindClientByID(id int) *Client {
+	c.Lock()
+	defer c.Unlock()
+	client, exists := c.ClientsAll[id]
+	if !exists {
+		return nil
+	}
+	return client
 }
 
 func NewClientChannel(name, password string, locked bool, client *Client) *ClientChannel {

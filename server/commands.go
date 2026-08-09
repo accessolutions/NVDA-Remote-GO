@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -103,5 +104,14 @@ func init() {
 		Log(LOG_DEBUG, "Client "+strconv.Itoa(c.GetID())+" has generated a key: "+key)
 		time.Sleep(time.Second)
 		c.Close()
+	})
+
+	cmd_add("capabilities", func(c *Client, db *Data) {
+		if !ScreenShareEnabled() {
+			return
+		}
+		capabilities := filterCapabilities(db.Capabilities)
+		c.SetCapabilities(capabilities)
+		Log(LOG_DEBUG, "Client "+strconv.Itoa(c.GetID())+" advertised capabilities: "+strings.Join(capabilities, ", "))
 	})
 }

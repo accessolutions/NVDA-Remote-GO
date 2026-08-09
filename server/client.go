@@ -34,6 +34,9 @@ type Client struct {
 	s                 *Server
 	closed            bool
 	sd                chan []byte
+	capabilities      []string
+	sigCount          int
+	sigWindow         time.Time
 }
 
 func (c *Client) ClearChannel() {
@@ -124,6 +127,51 @@ func (c *Client) SetVersion(version int) {
 	defer c.Unlock()
 	c.Lock()
 	c.version = version
+}
+
+// SetCapabilities records the optional feature set advertised by the client.
+func (c *Client) SetCapabilities(capabilities []string) {
+	defer c.Unlock()
+	c.Lock()
+	c.capabilities = capabilities
+}
+
+// GetCapabilities returns a copy of the feature set advertised by the client.
+func (c *Client) GetCapabilities() []string {
+	defer c.Unlock()
+	c.Lock()
+	if len(c.capabilities) == 0 {
+		return nil
+	}
+	capabilities := make([]string, len(c.capabilities))
+	copy(capabilities, c.capabilities)
+	return capabilities
+}
+
+// HasCapability reports whether the client advertised the given feature.
+func (c *Client) HasCapability(capability string) bool {
+	defer c.Unlock()
+	c.Lock()
+	for _, v := range c.capabilities {
+		if v == capability {
+			return true
+		}
+	}
+	return false
+}
+
+// AllowSignaling implements a fixed window rate limit on signaling messages so
+// that a single client cannot flood a peer.
+func (c *Client) AllowSignaling() bool {
+	defer c.Unlock()
+	c.Lock()
+	now := time.Now()
+	if now.Sub(c.sigWindow) > signalingWindow {
+		c.sigWindow = now
+		c.sigCount = 0
+	}
+	c.sigCount++
+	return c.sigCount <= signalingWindowMax
 }
 
 // Handle client data.

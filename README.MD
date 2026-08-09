@@ -134,7 +134,7 @@ The included certificate file is a single file that contains an automatically ge
 # Usage
 
 ```console
-$ nvdaRemoteServer [-pid-file /path/to/pid/file] [-conf-file /path/to/configuration/file] [-conf-read=true] [-gen-conf-file /path/to/generated/configuration/file] [-gen-conf-dir=false] [-create=false] [-address :6837] [-cert-file /path/to/ssl/certificate] [-key-file /path/to/ssl/key] [-gen-cert-file /path/to/created/cert/file] [-motd "Example message of the day."] [-motd-always-display=false] [-send-origin=true] [-log-level=0] [-log-file /path/to/log/file] [-admin=false] [-admin-path /admin] [-geoip-api-url https://ipwho.is] [-launch=true]
+$ nvdaRemoteServer [-pid-file /path/to/pid/file] [-conf-file /path/to/configuration/file] [-conf-read=true] [-gen-conf-file /path/to/generated/configuration/file] [-gen-conf-dir=false] [-create=false] [-address :6837] [-cert-file /path/to/ssl/certificate] [-key-file /path/to/ssl/key] [-gen-cert-file /path/to/created/cert/file] [-motd "Example message of the day."] [-motd-always-display=false] [-send-origin=true] [-screen-share=false] [-turn-url stun:turn.example.com:3478] [-turn-secret secret] [-turn-ttl 3600] [-log-level=0] [-log-file /path/to/log/file] [-admin=false] [-admin-path /admin] [-geoip-api-url https://ipwho.is] [-launch=true]
 ```
 
 Please note that the brackets around a parameter indicate that it is optional.
@@ -261,6 +261,38 @@ Force the client to display the message of the day from the server, even if it h
 #### `-send-origin`
 
 By default, when the server receives a message from a client, it will send that same message to all clients that need to receive it, but it will add an origin field to that message. This requires that the message be decoded into a value the program can more easily manipulate, an origin message added to it, then encoded back to the value that will be sent to all clients. This could cause a slight performance hit. You can disable this feature by setting it to false, if desired, though you might find some things don't work properly for you if you do so. If you set this to false, the server will warn yu that it may impact the functionality of clients when the origin field is required.
+
+
+#### `-screen-share`
+
+Enable relaying of WebRTC screen sharing signaling between clients. This is disabled by default, so upgrading the server changes nothing for existing deployments.
+
+When enabled, clients may advertise their supported features through a `capabilities` message and exchange session descriptions and ICE candidates through the server. Only signaling transits, which amounts to a few kilobytes per session. **Audio and video never pass through the server**, they travel directly between the two clients, or through a TURN relay when a direct connection cannot be established.
+
+Signaling messages are routed to a single target client rather than broadcast, and are refused when the sender or the target is a master that has not been authorized on a locked channel. A rate limit is applied per client.
+
+Clients that do not advertise the screen sharing capability never receive these messages, so older clients are unaffected.
+
+
+#### `-turn-url`
+
+A STUN or TURN URL handed to clients that ask for ICE servers, such as `stun:turn.example.com:3478` or `turn:turn.example.com:3478?transport=udp`. You may declare this parameter more than once. It requires `-screen-share`.
+
+Without a TURN relay, clients located behind restrictive firewalls will fail to establish a direct connection.
+
+
+#### `-turn-secret`
+
+The shared secret used to derive ephemeral TURN credentials. It must match the `static-auth-secret` of your TURN server, such as coturn, configured with `use-auth-secret`.
+
+The secret itself is never sent to clients. Each client receives a username and password that expire, which prevents your TURN server from being used as an open relay.
+
+Prefer setting this through a configuration file, since command line parameters are visible to other users of the machine through the process list.
+
+
+#### `-turn-ttl`
+
+The lifetime in seconds of the ephemeral TURN credentials handed to clients. It defaults to 3600.
 
 
 #### `-log-file`

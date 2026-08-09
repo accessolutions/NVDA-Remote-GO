@@ -18,6 +18,10 @@ type Cfg struct {
 	Motd              string      `json:"motd"`
 	MotdAlwaysDisplay bool        `json:"motd_always_display"`
 	SendOrigin        bool        `json:"send_origin"`
+	ScreenShare       bool        `json:"screen_share"`
+	TurnUrls          StringList  `json:"turn_urls"`
+	TurnSecret        string      `json:"turn_secret"`
+	TurnTtl           int         `json:"turn_ttl"`
 	ll                []int
 	ls                [][]interface{}
 	le                []bool
@@ -35,6 +39,10 @@ func cfg_default() *Cfg {
 		Motd:              DEFAULT_MOTD,
 		MotdAlwaysDisplay: DEFAULT_MOTD_ALWAYS_DISPLAY,
 		SendOrigin:        DEFAULT_SEND_ORIGIN,
+		ScreenShare:       DEFAULT_SCREEN_SHARE,
+		TurnUrls:          DEFAULT_TURN_URLS,
+		TurnSecret:        DEFAULT_TURN_SECRET,
+		TurnTtl:           DEFAULT_TURN_TTL,
 		ll:                make([]int, 0),
 		ls:                make([][]interface{}, 0),
 		le:                make([]bool, 0),
@@ -67,6 +75,18 @@ func (c *Cfg) IsDefault() bool {
 		return false
 	}
 	if !default_send_origin(c.SendOrigin) {
+		return false
+	}
+	if !default_screen_share(c.ScreenShare) {
+		return false
+	}
+	if !default_turn_urls(c.TurnUrls) {
+		return false
+	}
+	if !default_turn_secret(c.TurnSecret) {
+		return false
+	}
+	if !default_turn_ttl(c.TurnTtl) {
 		return false
 	}
 	return true
@@ -231,6 +251,10 @@ func (c *Cfg) CmdGet() {
 	c.Motd = motd
 	c.MotdAlwaysDisplay = motdAlwaysDisplay
 	c.SendOrigin = sendOrigin
+	c.ScreenShare = screenShare
+	c.TurnUrls = turnUrls
+	c.TurnSecret = turnSecret
+	c.TurnTtl = turnTtl
 }
 
 func (c *Cfg) CmdSet() {
@@ -260,6 +284,18 @@ func (c *Cfg) CmdSet() {
 	}
 	if !default_send_origin(c.SendOrigin) && default_send_origin(sendOrigin) {
 		sendOrigin = c.SendOrigin
+	}
+	if !default_screen_share(c.ScreenShare) && default_screen_share(screenShare) {
+		screenShare = c.ScreenShare
+	}
+	if !default_turn_urls(c.TurnUrls) && default_turn_urls(turnUrls) {
+		turnUrls = c.TurnUrls
+	}
+	if !default_turn_secret(c.TurnSecret) && default_turn_secret(turnSecret) {
+		turnSecret = c.TurnSecret
+	}
+	if !default_turn_ttl(c.TurnTtl) && default_turn_ttl(turnTtl) {
+		turnTtl = c.TurnTtl
 	}
 }
 

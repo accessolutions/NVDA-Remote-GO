@@ -130,6 +130,9 @@ func MessageReceived(c *Client, pmsg []byte) {
 	}
 	cc := c.GetChannel()
 	if cc != nil {
+		if HandleScreenShare(c, cc, pmsg) {
+			return
+		}
 		if sendOrigin {
 			pmsg, err = JsonAdd(pmsg, "origin", id)
 			if err != nil {
