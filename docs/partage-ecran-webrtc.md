@@ -53,49 +53,45 @@ braille, sans qu'aucun pixel ne soit transmis. Lier ce lot à la vidéo reviendr
 Symétriquement, le lot 2 reste utile seul, en simple consultation, lorsque
 l'esclave accorde la vue mais refuse le contrôle.
 
-### 1.2 Moteur vidéo : Microsoft Edge, seul retenu
+### 1.2 Moteur vidéo : un navigateur Chromium
 
-Le lot 2 s'appuie sur **Microsoft Edge**, piloté par TeleNVDA à travers une page
-servie sur `127.0.0.1`. C'est le seul moteur retenu, et **aucun autre navigateur
-n'est pris en charge**.
+Le lot 2 s'appuie sur un **navigateur Chromium déjà installé sur le poste**,
+piloté par TeleNVDA à travers une page servie sur `127.0.0.1`. Microsoft Edge est
+utilisé en priorité ; Google Chrome et Brave servent de repli.
 
 Ce choix supprime purement et simplement la brique la plus coûteuse du projet :
 ni capture à écrire, ni encodeur à embarquer, ni pile WebRTC à maintenir, ni
-exécutable à signer et à distribuer. Edge fournit `getDisplayMedia()`,
+exécutable à signer et à distribuer. Le navigateur fournit `getDisplayMedia()`,
 l'encodage VP8/VP9 accéléré matériellement, le transport DTLS-SRTP et l'affichage.
 TeleNVDA ne conserve que la signalisation, déjà en Python, et l'injection des
 entrées par `ctypes`, hors du bac à sable du navigateur.
 
-Pourquoi Edge et lui seul :
+Pourquoi Edge en premier :
 
 - il est **installé par défaut sur Windows 10 et 11**, donc aucun téléchargement
   ni prérequis à documenter pour l'utilisateur ;
 - il est mis à jour par Windows Update, donc la pile WebRTC reste corrigée sans
   action de notre part ;
 - son chemin d'installation est **prévisible**, ce qui évite toute heuristique de
-  détection ;
-- restreindre à un seul navigateur réduit d'autant la matrice de test, point
-  déterminant pour un outil d'accessibilité.
+  détection.
+
+Chrome et Brave sont acceptés ensuite parce qu'ils partagent le même moteur : la
+page locale y fonctionne sans adaptation, et cela couvre les postes où Edge a été
+retiré. Aucun autre navigateur n'est recherché, afin de garder une matrice de
+test réduite, point déterminant pour un outil d'accessibilité.
 
 Les autres pistes sont **abandonnées** :
 
 | Piste | Motif d'abandon |
 |---|---|
-| Chrome, Brave et autres Chromium | équivalents techniquement, mais multiplient la matrice de test sans rien apporter |
 | Firefox | ne reconnaît pas les indicateurs de sélection automatique de source |
 | `aiortc` en Python | dépend de `PyAV`/FFmpeg, encodage logiciel sous le GIL, pénalise la réactivité de la synthèse vocale |
-| Helper Go `pion/webrtc` | duplique ce qu'Edge fait mieux, impose un binaire à télécharger, signer et maintenir |
+| Exécutable natif dédié | duplique ce que le navigateur fait mieux, impose un binaire à télécharger, signer et maintenir |
 
-Si Edge est absent ou désinstallé, **le partage d'écran est simplement
+Si aucun de ces navigateurs n'est installé, **le partage d'écran est simplement
 indisponible** : l'option est grisée et un message l'explique. Le lot 1, les
 entrées, continue de fonctionner normalement, puisqu'il ne dépend d'aucun
 navigateur.
-
-Le helper Go reste décrit dans
-[docs/helper-webrtc-implementation.md](docs/helper-webrtc-implementation.md) à
-titre de **repli documenté, non implémenté**. Le protocole de signalisation est
-identique dans les deux cas : un poste sous Edge et un poste sous helper
-resteraient interopérables.
 
 ---
 
@@ -293,7 +289,7 @@ explicite de l'esclave.
 Les coordonnées sont **normalisées** en flottants `[0,1]` par rapport à l'écran
 partagé, pour être indépendantes de la résolution et du facteur DPI. Le format
 canonique des champs (`m`, `md`, `mu`, `w`, `kd`, `ku`) est décrit une seule fois,
-dans [docs/helper-webrtc-implementation.md](docs/helper-webrtc-implementation.md) ;
+dans [docs/signalisation-webrtc-client.md](docs/signalisation-webrtc-client.md) ;
 ce document fait foi en cas de divergence.
 
 L'esclave applique les événements avec `SendInput`, après conversion vers les
@@ -436,7 +432,7 @@ d'administration existantes ([server/admin.go](server/admin.go)).
 
 ---
 
-## 7. Moteur vidéo : Microsoft Edge
+## 7. Moteur vidéo : un navigateur Chromium
 
 ### 7.1 Principe
 
@@ -459,7 +455,7 @@ flowchart LR
     BE <==>|SRTP pair a pair| BM
 ```
 
-Edge est nécessaire **des deux côtés** : c'est lui qui capture chez
+Le navigateur est nécessaire **des deux côtés** : c'est lui qui capture chez
 l'esclave et qui décode chez le maître. La différence est sa visibilité.
 
 | | Esclave | Maître |
@@ -471,15 +467,17 @@ l'esclave et qui décode chez le maître. La différence est sa visibilité.
 `http://127.0.0.1` est un **contexte sécurisé** au sens des navigateurs :
 `getDisplayMedia()` y est autorisé sans certificat TLS.
 
-### 7.2 Détection d'Edge
+### 7.2 Détection du navigateur
 
-Ordre de recherche, du plus fiable au moins fiable :
+Les candidats sont essayés dans l'ordre `msedge.exe`, `chrome.exe`, puis
+`brave.exe`. Pour chacun, ordre de recherche, du plus fiable au moins fiable :
 
-1. Clé de registre `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe`,
-   valeur par défaut. C'est la source faisant autorité sous Windows.
-2. Chemins d'installation habituels :
-   `%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe` puis
-   `%ProgramFiles%\Microsoft\Edge\Application\msedge.exe`.
+1. Clé de registre
+   `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\<executable>`,
+   valeur par défaut, puis la même clé sous `HKCU`. C'est la source faisant
+   autorité sous Windows.
+2. Chemins d'installation habituels, sous `%ProgramFiles(x86)%`,
+   `%ProgramFiles%` puis `%LocalAppData%`.
 
 Ne **jamais** se contenter d'invoquer `msedge` en s'en remettant au `PATH` : la
 variable peut être détournée par un exécutable arbitraire placé dans un dossier
@@ -720,9 +718,9 @@ Comportement attendu, à défaut de prise en charge :
 - reprendre automatiquement au retour dans la session utilisateur.
 
 La prise en charge du bureau sécurisé supposerait un service natif sous le compte
-SYSTEM, donc exactement le helper que ce choix d'architecture écarte. Ce serait
-un projet distinct, à auditer séparément : un défaut y offrirait un contrôle
-distant de l'écran de connexion.
+SYSTEM, donc exactement l'exécutable dédié que ce choix d'architecture écarte. Ce
+serait un projet distinct, à auditer séparément : un défaut y offrirait un
+contrôle distant de l'écran de connexion.
 
 ---
 
