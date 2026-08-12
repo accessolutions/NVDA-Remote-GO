@@ -4,8 +4,8 @@
 d'un contrôle souris à NVDA Remote, en s'appuyant sur le serveur Go de ce dépôt
 comme canal de signalisation.
 
-Statut : proposition de conception. Aucun code de cette étude n'est encore
-implémenté.
+Statut : la **signalisation serveur est implémentée** ([server/screenshare.go](server/screenshare.go))
+et déployée sur l'instance de test. Le code client reste à écrire.
 
 ---
 
@@ -14,10 +14,88 @@ implémenté.
 | Sujet | Choix |
 |---|---|
 | Architecture | WebRTC pair-à-pair, serveur en signalisation, TURN en repli |
+| Découpage | Deux lots livrables indépendamment : entrées (lot 1) et vidéo (lot 2) |
+| Transport des entrées | Canal NVDA Remote historique, avec bascule opportuniste sur le `DataChannel` |
+| Moteur vidéo | **Microsoft Edge uniquement**, piloté par une page locale sur `127.0.0.1` |
 | Qualité | Adaptative : aperçu lent (1-5 i/s) jusqu'à vidéo fluide (30 i/s) |
 | Compatibilité | Négociation explicite de capacités, clients existants non impactés |
-| Souris | Contrôle complet, bureau sécurisé Windows inclus |
 | Licences | Chaîne entièrement libre, sans brevet vidéo (VP8/VP9) |
+
+### 1.1 Découplage entre les entrées et la vidéo
+
+Le contrôle des entrées et la diffusion de l'écran ont été conçus ensemble dans
+les premières versions de cette étude. C'était une erreur d'architecture : ces
+deux fonctions n'ont ni le même volume, ni les mêmes dépendances, ni la même
+difficulté.
+
+| | Lot 1 — entrées | Lot 2 — vidéo |
+|---|---|---|
+| Volume | quelques dizaines d'octets par événement | 0,1 à 4 Mb/s |
+| Transport | canal NVDA Remote existant | WebRTC pair à pair |
+| Dépendances client | aucune, `ctypes` suffit | pile WebRTC, capture, encodeur |
+| Modification serveur | **aucune** | signalisation et TURN |
+| Binaire supplémentaire | non | non, Edge est déjà présent |
+
+Deux constats justifient le découplage.
+
+D'abord, **NVDA Remote injecte déjà des frappes clavier en Python pur**, par le
+module `local_machine` du greffon, sans le moindre exécutable. Ajouter la souris
+relève exactement du même mécanisme : un appel `SendInput` via `ctypes`. Rien
+dans ce lot ne requiert WebRTC.
+
+Ensuite, le lot 1 a une valeur d'usage **même sans image**. Lorsque le maître
+déplace le pointeur distant, NVDA sur le poste assisté annonce ce qui se trouve
+sous le curseur, et cette parole est déjà renvoyée par le canal existant. Un
+utilisateur de lecteur d'écran explore donc l'écran distant à l'oreille ou en
+braille, sans qu'aucun pixel ne soit transmis. Lier ce lot à la vidéo reviendrait
+à retarder une fonction utile derrière la partie la plus coûteuse du projet.
+
+Symétriquement, le lot 2 reste utile seul, en simple consultation, lorsque
+l'esclave accorde la vue mais refuse le contrôle.
+
+### 1.2 Moteur vidéo : Microsoft Edge, seul retenu
+
+Le lot 2 s'appuie sur **Microsoft Edge**, piloté par TeleNVDA à travers une page
+servie sur `127.0.0.1`. C'est le seul moteur retenu, et **aucun autre navigateur
+n'est pris en charge**.
+
+Ce choix supprime purement et simplement la brique la plus coûteuse du projet :
+ni capture à écrire, ni encodeur à embarquer, ni pile WebRTC à maintenir, ni
+exécutable à signer et à distribuer. Edge fournit `getDisplayMedia()`,
+l'encodage VP8/VP9 accéléré matériellement, le transport DTLS-SRTP et l'affichage.
+TeleNVDA ne conserve que la signalisation, déjà en Python, et l'injection des
+entrées par `ctypes`, hors du bac à sable du navigateur.
+
+Pourquoi Edge et lui seul :
+
+- il est **installé par défaut sur Windows 10 et 11**, donc aucun téléchargement
+  ni prérequis à documenter pour l'utilisateur ;
+- il est mis à jour par Windows Update, donc la pile WebRTC reste corrigée sans
+  action de notre part ;
+- son chemin d'installation est **prévisible**, ce qui évite toute heuristique de
+  détection ;
+- restreindre à un seul navigateur réduit d'autant la matrice de test, point
+  déterminant pour un outil d'accessibilité.
+
+Les autres pistes sont **abandonnées** :
+
+| Piste | Motif d'abandon |
+|---|---|
+| Chrome, Brave et autres Chromium | équivalents techniquement, mais multiplient la matrice de test sans rien apporter |
+| Firefox | ne reconnaît pas les indicateurs de sélection automatique de source |
+| `aiortc` en Python | dépend de `PyAV`/FFmpeg, encodage logiciel sous le GIL, pénalise la réactivité de la synthèse vocale |
+| Helper Go `pion/webrtc` | duplique ce qu'Edge fait mieux, impose un binaire à télécharger, signer et maintenir |
+
+Si Edge est absent ou désinstallé, **le partage d'écran est simplement
+indisponible** : l'option est grisée et un message l'explique. Le lot 1, les
+entrées, continue de fonctionner normalement, puisqu'il ne dépend d'aucun
+navigateur.
+
+Le helper Go reste décrit dans
+[docs/helper-webrtc-implementation.md](docs/helper-webrtc-implementation.md) à
+titre de **repli documenté, non implémenté**. Le protocole de signalisation est
+identique dans les deux cas : un poste sous Edge et un poste sous helper
+resteraient interopérables.
 
 ---
 
@@ -56,39 +134,46 @@ négligeable.
 ```mermaid
 flowchart LR
     subgraph Slave["Poste assisté (slave)"]
-        NVDA1[NVDA + add-on]
-        HELPER1[Helper WebRTC<br/>capture DXGI + VP8/VP9]
+        NVDA1[NVDA + add-on<br/>injection ctypes SendInput]
+        EDGE1[Edge masqué<br/>getDisplayMedia + VP8/VP9]
     end
     subgraph Master["Poste assistant (master)"]
         NVDA2[NVDA / TeleNVDA]
-        HELPER2[Helper WebRTC<br/>rendu + événements souris]
+        EDGE2[Edge visible<br/>rendu + événements souris]
     end
     SRV[(Serveur NVDA Remote Go<br/>signalisation uniquement)]
     TURN[(coturn<br/>STUN + TURN de repli)]
 
     NVDA1 <-->|JSON existant| SRV
     NVDA2 <-->|JSON existant| SRV
-    NVDA1 --- HELPER1
-    NVDA2 --- HELPER2
-    HELPER1 <-.->|ICE| TURN
-    HELPER2 <-.->|ICE| TURN
-    HELPER1 <==>|"SRTP vidéo + DataChannel souris (P2P)"| HELPER2
+    NVDA1 ---|WS 127.0.0.1| EDGE1
+    NVDA2 ---|WS 127.0.0.1| EDGE2
+    EDGE1 <-.->|ICE| TURN
+    EDGE2 <-.->|ICE| TURN
+    EDGE1 <==>|"SRTP vidéo (P2P)"| EDGE2
 ```
 
 Le serveur ne voit passer que quelques kilo-octets de SDP et de candidats ICE par
 session. Les médias empruntent le chemin direct, ou le TURN en cas d'échec.
 
+Les événements d'entrée suivent le canal NVDA Remote historique, donc le trait
+`JSON existant`, et non le lien pair à pair. Ils basculent sur un `DataChannel`
+entre les deux instances d'Edge lorsqu'une session vidéo est établie, cf.
+section 4.4.
+
 ### 3.1 Répartition de l'effort
 
 | Composant | Complexité | Nature |
 |---|---|---|
-| Serveur Go (ce dépôt) | Faible | Commandes de signalisation, TURN REST, filtrage d'autorisation |
+| Serveur Go (ce dépôt) | Faible, **déjà fait** | Commandes de signalisation, TURN REST, filtrage d'autorisation |
 | coturn + exploitation | Faible à moyenne | Déploiement, secret partagé, supervision |
-| Helper WebRTC | Élevée | Capture, encodage, transport, injection d'entrées |
-| Interface add-on / TeleNVDA | Moyenne | Consentement, fenêtre vidéo, réglages, raccourcis |
-| Bureau sécurisé | Élevée | Contexte SYSTEM, desktop Winlogon, cycle de vie |
+| Page locale et pont WebSocket | Moyenne | HTML/JS de signalisation, serveur local à jeton |
+| Injection d'entrées | Faible | `SendInput` par `ctypes`, conversion de coordonnées |
+| Interface add-on / TeleNVDA | Moyenne | Consentement, cycle de vie d'Edge, réglages, raccourcis |
+| Bureau sécurisé | Hors périmètre | Inaccessible avec ce moteur |
 
-Le serveur Go représente la plus petite part du travail.
+Le serveur Go représente la plus petite part du travail, et elle est déjà
+réalisée.
 
 ---
 
@@ -178,23 +263,42 @@ Réponse, selon le mécanisme REST TURN (`username = <expiration>:<user_id>`,
 Le secret partagé n'est jamais transmis au client. Les identifiants expirent, ce
 qui empêche l'usage du TURN comme relais ouvert.
 
-### 4.4 Canal de données pour la souris et le clavier
+### 4.4 Transport des événements d'entrée
 
-Un `RTCDataChannel` fiable et ordonné, séparé du flux vidéo, transporte les
-événements d'entrée. Format compact, coordonnées **normalisées** en flottants
-`[0,1]` pour être indépendantes de la résolution et du facteur DPI :
+Les événements de souris et de clavier empruntent **deux chemins possibles, avec
+une charge utile strictement identique** :
+
+| Chemin | Disponibilité | Latence typique | Usage |
+|---|---|---|---|
+| Canal NVDA Remote historique, message `mouse` | toujours | 50 à 150 ms (aller-retour serveur) | chemin par défaut et repli |
+| `RTCDataChannel` nommé `input` | seulement si une session vidéo est établie | 10 à 30 ms (pair à pair) | pointage fin |
+
+Règle d'implémentation : **si le `DataChannel` est ouvert, l'utiliser ; sinon,
+retomber sur le canal historique**, sans que l'utilisateur ait à le savoir. Cette
+bascule est indispensable, car le cas où WebRTC échoue — NAT symétrique sans
+TURN joignable — est précisément celui où l'on veut conserver au moins le
+contrôle.
+
+Sur le canal historique, le message est encapsulé dans le protocole existant :
 
 ```json
-{ "t": "m", "x": 0.4312, "y": 0.7788, "s": 0 }
-{ "t": "md", "b": "left" }
-{ "t": "mu", "b": "left" }
-{ "t": "w", "d": -120, "h": false }
-{ "t": "kd", "vk": 65, "ext": false }
+{ "type": "mouse", "t": "md", "x": 0.4312, "y": 0.7788, "b": 0 }
 ```
 
-Le champ `s` désigne l'index de l'écran en configuration multi-moniteurs. Le
-slave applique les événements avec `SendInput`, après conversion en coordonnées
-absolues de l'écran ciblé.
+Le serveur étant un relais aveugle, ce type transite sans aucune modification de
+code serveur. Il reste protégé par la capacité `input_control/1`, déjà définie
+dans [server/screenshare.go](server/screenshare.go), et par le consentement
+explicite de l'esclave.
+
+Les coordonnées sont **normalisées** en flottants `[0,1]` par rapport à l'écran
+partagé, pour être indépendantes de la résolution et du facteur DPI. Le format
+canonique des champs (`m`, `md`, `mu`, `w`, `kd`, `ku`) est décrit une seule fois,
+dans [docs/helper-webrtc-implementation.md](docs/helper-webrtc-implementation.md) ;
+ce document fait foi en cas de divergence.
+
+L'esclave applique les événements avec `SendInput`, après conversion vers les
+coordonnées absolues du bureau virtuel. Le sens est **toujours du maître vers
+l'esclave** : l'esclave n'envoie jamais d'événement d'entrée.
 
 ---
 
@@ -332,31 +436,232 @@ d'administration existantes ([server/admin.go](server/admin.go)).
 
 ---
 
-## 7. Helper WebRTC côté client
+## 7. Moteur vidéo : Microsoft Edge
 
-### 7.1 Choix de la pile
+### 7.1 Principe
 
-Deux options réalistes, toutes deux libres :
+TeleNVDA héberge un petit serveur HTTP et WebSocket sur `127.0.0.1`, sert une
+page locale, et lance Edge sur cette page. La page fait tout le
+travail média ; TeleNVDA ne fait que relayer la signalisation entre cette page et
+le serveur NVDA Remote.
 
-| Option | Licence | Avantages | Inconvénients |
+```mermaid
+flowchart LR
+    subgraph Esclave
+        NE[NVDA + TeleNVDA] <-->|WS 127.0.0.1| BE[Edge masqué<br/>getDisplayMedia]
+        NE -->|ctypes SendInput| WIN[Windows]
+    end
+    subgraph Maitre
+        NM[NVDA + TeleNVDA] <-->|WS 127.0.0.1| BM[Edge visible<br/>video + clics]
+    end
+    NE <-->|signalisation| S[(Serveur Go relais)]
+    S <--> NM
+    BE <==>|SRTP pair a pair| BM
+```
+
+Edge est nécessaire **des deux côtés** : c'est lui qui capture chez
+l'esclave et qui décode chez le maître. La différence est sa visibilité.
+
+| | Esclave | Maître |
+|---|---|---|
+| Rôle | capture et émission | réception et affichage |
+| Fenêtre | masquée, hors écran | visible, c'est l'interface |
+| Interaction | aucune après démarrage | clics et frappes capturés |
+
+`http://127.0.0.1` est un **contexte sécurisé** au sens des navigateurs :
+`getDisplayMedia()` y est autorisé sans certificat TLS.
+
+### 7.2 Détection d'Edge
+
+Ordre de recherche, du plus fiable au moins fiable :
+
+1. Clé de registre `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe`,
+   valeur par défaut. C'est la source faisant autorité sous Windows.
+2. Chemins d'installation habituels :
+   `%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe` puis
+   `%ProgramFiles%\Microsoft\Edge\Application\msedge.exe`.
+
+Ne **jamais** se contenter d'invoquer `msedge` en s'en remettant au `PATH` : la
+variable peut être détournée par un exécutable arbitraire placé dans un dossier
+prioritaire, ce qui reviendrait à lancer un programme quelconque avec les droits
+de l'utilisateur. Toujours partir d'un chemin absolu vérifié.
+
+Si aucun chemin n'aboutit, TeleNVDA **ne déclare pas** la capacité
+`screen_share/1`. Le pair distant grise alors l'option de lui-même, sans
+traitement particulier : c'est exactement le comportement prévu par le protocole.
+
+### 7.3 Fenêtre discrète côté esclave
+
+L'exigence est double : ne pas déranger l'utilisateur assisté, et ne pas polluer
+l'image transmise.
+
+Lancement dans un **profil dédié et jetable**, jamais le profil habituel de
+l'utilisateur :
+
+```
+<chemin absolu résolu en 7.2>\msedge.exe
+           --app=http://127.0.0.1:<port>/s?k=<jeton>
+           --user-data-dir=<dossier temporaire dédié>
+           --window-position=-32000,-32000
+           --window-size=320,240
+           --no-first-run --no-default-browser-check --disable-extensions
+           --use-fake-ui-for-media-stream
+           --disable-background-timer-throttling
+           --disable-backgrounding-occluded-windows
+           --disable-renderer-backgrounding
+```
+
+| Option | Effet |
+|---|---|
+| `--app=` | fenêtre sans barre d'adresse ni onglets |
+| `--user-data-dir=` | profil isolé ; aucune donnée de navigation de l'utilisateur n'est accessible à la page |
+| `--window-position=-32000,-32000` | fenêtre positionnée hors du bureau virtuel |
+| `--use-fake-ui-for-media-stream` | supprime le sélecteur de source, cf. 7.4 |
+| `--disable-*-throttling`, `--disable-*-backgrounding` | stabilisent la cadence, cf. mesures ci-dessous |
+
+Le placement **hors écran est préférable à la simple réduction**, pour deux
+raisons : une fenêtre réduite peut être restaurée par erreur, et surtout une
+fenêtre visible affichant le flux se capturerait elle-même, produisant l'effet de
+miroir infini.
+
+**Le mode `headless` est inutilisable.** Sans bureau attaché, il n'y a pas
+d'écran à capturer. La fenêtre doit exister, seulement être invisible.
+
+#### Mesures, Edge 151.0.4129.72
+
+Le bridage des fenêtres en arrière-plan était le principal doute sur cette
+approche. Il est levé : une fenêtre positionnée à `-32000,-32000` **n'est pas
+bridée**.
+
+| Configuration | Cadence émise | Dérive du minuteur | Gels |
 |---|---|---|---|
-| `aiortc` en Python, dans le processus NVDA | BSD-3 | Intégration directe à l'add-on | Dépend de PyAV/ffmpeg, empreinte lourde, performances d'encodage limitées, boucle asyncio à cohabiter avec NVDA |
-| Exécutable auxiliaire en Go avec `pion/webrtc`, piloté par IPC local | MIT | Performances, isolation des plantages, réutilise les compétences Go de ce dépôt, mise à jour indépendante | Binaire supplémentaire à signer et distribuer, IPC à concevoir |
+| Fenêtre visible, drapeaux anti-bridage | 15 img/s | 1 ms | 0 |
+| Fenêtre hors écran, drapeaux anti-bridage | 15,2 img/s | -15 ms | 0 |
+| Fenêtre hors écran, sans ces drapeaux | 14,1 img/s | -9 ms | 2, soit 1,5 s |
 
-**Recommandation : l'exécutable auxiliaire en Go.** Un plantage de la pile média
-ne doit jamais faire tomber NVDA, qui est un outil d'accessibilité vital. L'IPC
-peut être une simple socket locale en boucle sur 127.0.0.1, protégée par un jeton
-aléatoire généré au lancement.
+Mesures sur 14 à 18 secondes, source 1920x1200 à 15 img/s demandées, environ
+530 kbit/s. La dérive du minuteur est l'écart entre deux réveils d'un intervalle
+d'une seconde dans la page émettrice : c'est ce qui trahirait un rendu bridé.
 
-### 7.2 Capture d'écran
+Les drapeaux anti-bridage restent donc nécessaires, non pour la cadence moyenne,
+mais pour supprimer les gels.
 
-`IDXGIOutputDuplication` (Desktop Duplication API) est la seule voie viable sous
-Windows : capture accélérée matériellement, notification des régions modifiées,
-consommation CPU faible. Repli sur `BitBlt` avec `PW_RENDERFULLCONTENT` pour les
-machines virtuelles et les configurations sans pilote WDDM compatible.
+Protocole de mesure reproductible : [prototype/edge-capture/maquette.py](prototype/edge-capture/maquette.py).
 
-### 7.3 Codecs
+### 7.4 Sélecteur de source d'écran
 
+C'est la seule friction réelle de cette approche. `getDisplayMedia()` impose
+normalement une boîte de dialogue de choix de source, déclenchée par un geste
+utilisateur. Cette boîte est inutilisable dans notre cas : elle s'ouvrirait sur
+le poste assisté, dans une fenêtre placée hors écran, devant un utilisateur qui
+ne peut ni la voir ni l'atteindre.
+
+#### Ce qui a été mesuré
+
+**`--auto-select-desktop-capture-source` ne fonctionne pas.** Neuf titres de
+source ont été essayés sur Edge 151, en anglais comme en français, `Entire
+screen`, `Entire Screen`, `Screen 1`, `Ecran entier`, `Écran entier`, `Tout
+l'écran`, `Écran 1`, `Ecran 1`, `Bureau 1` : dans tous les cas la boîte de
+dialogue s'est ouverte et `getDisplayMedia()` n'a jamais rendu la main. Cet
+indicateur est donc écarté, contrairement à ce qui était supposé.
+
+**`--use-fake-ui-for-media-stream` fonctionne.** Le sélecteur disparaît et le
+flux est obtenu en 700 à 1000 ms, sans aucune interaction, fenêtre visible comme
+hors écran.
+
+#### Contrepartie de sécurité, et pourquoi elle est acceptable
+
+Ce drapeau n'accorde pas seulement l'écran : il accorde **toutes** les
+permissions média sans rien demander, microphone et caméra compris. Il ne serait
+pas acceptable dans un navigateur ordinaire.
+
+Il l'est ici parce que le processus lancé n'a rien d'un navigateur ordinaire :
+
+- il tourne sur un **profil temporaire**, créé pour la session et supprimé
+  ensuite, sans historique, sans mot de passe enregistré, sans extension ;
+- il ne charge **qu'une seule page**, servie par TeleNVDA sur `127.0.0.1`,
+  derrière un jeton de 256 bits, avec vérification de l'en-tête `Origin` ;
+- cette page ne demande jamais ni micro ni caméra ; la permission élargie porte
+  donc sur des capacités qu'aucun code ne sollicite ;
+- il est terminé à la fin de la session.
+
+La surface réelle se réduit à cette page. Le drapeau ne doit jamais être passé à
+une instance d'Edge susceptible de charger autre chose, ni au profil habituel de
+l'utilisateur.
+
+#### Le consentement reste demandé
+
+Supprimer le dialogue du navigateur n'est légitime que parce que **le
+consentement réel est demandé par TeleNVDA lui-même**, par une boîte de dialogue
+accessible, avant tout lancement du navigateur. Le dialogue du navigateur n'est
+pas accessible dans les mêmes termes à un utilisateur de lecteur d'écran ; le
+supprimer sans le remplacer serait inacceptable. C'est le lot 2, phase 6.
+
+#### Repli
+
+Si une version future d'Edge retirait ce drapeau, le repli reste la voie manuelle :
+la page affiche un unique bouton, focalisé d'emblée, et la fenêtre est amenée au
+premier plan le temps du consentement, puis renvoyée hors écran. Les stratégies
+d'entreprise `ScreenCaptureAllowedByOrigins` et
+`ScreenCaptureWithoutGestureAllowedForOrigins` conviennent aux parcs gérés, mais
+ne dispensent pas du choix de la source.
+
+#### Point non mesuré
+
+Le comportement en **multi-écrans** reste à vérifier : la fausse interface
+sélectionne une source par défaut, mais laquelle exactement lorsqu'il y en a
+plusieurs n'a pas été observé. La mesure a été faite sur un écran unique.
+
+### 7.5 Sécurité du pont local
+
+Point de vigilance principal de toute cette approche : **n'importe quelle page
+ouverte dans le navigateur de l'utilisateur peut tenter de se connecter à
+`ws://127.0.0.1`**. Sans protection, un site malveillant pilote la souris du
+poste.
+
+Mesures obligatoires :
+
+| Exigence | Mise en œuvre |
+|---|---|
+| Écoute restreinte | liaison sur `127.0.0.1` uniquement, jamais `0.0.0.0` |
+| Port éphémère | port 0, attribué par le système à chaque session |
+| Jeton | 256 bits aléatoires, exigé sur la WebSocket comme sur chaque requête HTTP |
+| Vérification d'origine | rejet de tout en-tête `Origin` ne correspondant pas à l'origine locale attendue |
+| Durée de vie | serveur démarré à l'ouverture de session, arrêté dès la fin |
+| Comparaison du jeton | comparaison à temps constant, pour éviter une attaque temporelle |
+| Nettoyage | arborescence de processus du navigateur terminée et profil temporaire supprimé à la fin |
+
+Le jeton transite dans l'URL passée au navigateur. Il est donc visible dans la
+ligne de commande du processus. Comme il n'est valable que le temps d'une session
+et ne donne accès qu'à une session déjà consentie, le risque est accepté ; il
+devra néanmoins être réévalué si le pont local gagne des fonctions.
+
+### 7.6 Réglages média dans la page
+
+- `contentHint = "text"` ou `"detail"` sur la piste vidéo : privilégie la netteté
+  du texte sur la fluidité. C'est le bon compromis ici.
+- Plafonner par `applyConstraints` à 1920 × 1080 et à la cadence du profil
+  choisi.
+- Ordonner les codecs par `setCodecPreferences` : VP9 puis VP8. Ne jamais
+  retirer VP8, repli universel.
+- Ne jamais demander l'audio : `getDisplayMedia({ video: true, audio: false })`.
+- Surveiller `track.onended`, qui signale l'arrêt du partage par l'utilisateur ou
+  par le système, et émettre alors `screen_share_stop`.
+
+### 7.7 Limites assumées
+
+| Limite | Conséquence |
+|---|---|
+| Nécessite Edge | présent par défaut sous Windows 10 et 11 ; s'il est absent, la capacité `screen_share/1` n'est pas déclarée et l'option est grisée chez le pair |
+| Aucun autre navigateur | Chrome, Firefox et les autres ne sont pas pris en charge, même s'ils sont installés |
+| Bureau sécurisé hors de portée | un navigateur en session utilisateur ne capture ni l'écran de verrouillage ni les invites UAC, cf. section 8.2 |
+| Barre de notification de partage | Edge peut afficher un bandeau indiquant le partage en cours ; il est visible dans l'image transmise |
+| Processus supplémentaire | consommation mémoire d'une instance d'Edge pendant la session |
+
+La limite du bureau sécurisé est structurelle et ne pourra pas être levée avec ce
+moteur. Elle est acceptée : le périmètre retenu est la session utilisateur.
+
+### 7.8 Codecs
 - **VP8** : obligatoire dans WebRTC, libre de redevance, licence BSD via libvpx.
   Repli universel.
 - **VP9** : outils de codage de contenu d'écran, nettement supérieur sur du texte
@@ -366,15 +671,17 @@ machines virtuelles et les configurations sans pilote WDDM compatible.
 - **H.264 : à écarter**, en raison des redevances MPEG LA, incompatibles avec une
   distribution libre.
 
-### 7.4 Qualité adaptative
+### 7.9 Qualité adaptative
 
 WebRTC fournit nativement le contrôle de congestion (GCC, retours TWCC), ce qui
 couvre l'essentiel du besoin d'adaptation. S'y ajoute une logique applicative :
 
-- détection d'inactivité de l'écran, qui fait chuter la cadence vers 1 i/s ;
-- profils utilisateur explicites (aperçu, équilibré, fluide) ;
+- profils utilisateur explicites (aperçu, équilibré, fluide), appliqués par
+  `applyConstraints` et par `RTCRtpSender.setParameters` ;
 - réduction automatique de résolution quand le débit disponible s'effondre, la
-  lisibilité du texte primant sur la fluidité.
+  lisibilité du texte primant sur la fluidité ;
+- réduction d'échelle côté source par `scaleResolutionDownBy` quand la fenêtre
+  d'affichage du maître est plus petite que l'écran distant.
 
 ---
 
@@ -387,36 +694,35 @@ converties depuis les valeurs normalisées vers le rectangle du bureau virtuel.
 Prise en charge du multi-écrans et des facteurs DPI hétérogènes via
 l'API par moniteur.
 
-### 8.2 Bureau sécurisé
+### 8.2 Bureau sécurisé — hors périmètre
 
-C'est la partie la plus délicate du projet.
+Le choix d'Edge comme moteur unique **exclut définitivement** le bureau sécurisé
+du périmètre. C'est le prix assumé de la simplicité.
 
 Contraintes :
 
 - L'écran de connexion et les invites UAC vivent sur le bureau **Winlogon**,
   distinct du bureau interactif par défaut. Un processus ne peut interagir
   qu'avec le bureau auquel il est attaché.
-- NVDA dispose déjà d'un mécanisme de copie sécurisée, lancée sous le compte
-  SYSTEM sur le bureau Winlogon, activé par l'option d'utilisation de NVDA sur
-  l'écran de connexion.
-- Les add-ons ne sont pas chargés en mode sécurisé sans déclaration explicite,
-  et le partage de configuration entre session utilisateur et session sécurisée
-  est volontairement restreint.
+- Edge s'exécute dans la session interactive de l'utilisateur : il ne capture ni
+  l'écran de verrouillage, ni les invites UAC, et **ne peut pas** être attaché au
+  bureau Winlogon.
+- `SendInput` est également refusé sur le bureau sécurisé, ainsi que vers toute
+  fenêtre plus privilégiée que le processus émetteur (UIPI).
 
-Conséquences de conception :
+Comportement attendu, à défaut de prise en charge :
 
-- Le helper doit pouvoir être lancé dans le contexte SYSTEM attaché au bureau
-  Winlogon, et détecter les basculements de bureau afin de se réattacher.
-- La clé de canal et les identifiants TURN doivent être transmis à cette instance
-  par un canal maîtrisé, ce qui constitue un point d'attention sécurité majeur :
-  un défaut ici offrirait un contrôle distant de l'écran de connexion.
-- La session WebRTC doit être **reprise**, pas maintenue, lors du basculement
-  vers le bureau sécurisé : les deux contextes sont des processus différents.
-  Cela implique un temps de coupure visible côté master, à traiter dans
-  l'interface.
+- détecter le basculement de bureau, par exemple avec `OpenInputDesktop` ;
+- **suspendre** l'affichage côté maître et indiquer explicitement « bureau
+  sécurisé, image suspendue » ;
+- ne **jamais** laisser la dernière image affichée, l'assistant croirait voir
+  l'état réel du poste ;
+- reprendre automatiquement au retour dans la session utilisateur.
 
-Recommandation de phasage : livrer d'abord la session utilisateur, et n'aborder
-le bureau sécurisé qu'une fois le reste stabilisé et audité.
+La prise en charge du bureau sécurisé supposerait un service natif sous le compte
+SYSTEM, donc exactement le helper que ce choix d'architecture écarte. Ce serait
+un projet distinct, à auditer séparément : un défaut y offrirait un contrôle
+distant de l'écran de connexion.
 
 ---
 
@@ -431,7 +737,10 @@ le bureau sécurisé qu'une fois le reste stabilisé et audité.
 | TURN utilisé comme relais ouvert | Identifiants éphémères HMAC à TTL courte, jamais de compte statique |
 | Fuite d'adresses IP privées via ICE | Option de politique `relay` forçant le passage par TURN |
 | Interception du flux | DTLS-SRTP, natif et obligatoire en WebRTC |
-| Injection d'entrées non sollicitée | Le canal de données n'est ouvert que si le contrôle souris a été explicitement accordé, et il est refermé à la révocation |
+| Injection d'entrées non sollicitée | Le contrôle n'est actif que s'il a été explicitement accordé ; à la révocation, l'esclave cesse d'appliquer les événements et le `DataChannel` est refermé |
+| Page web tierce pilotant le pont local | Écoute sur `127.0.0.1` seulement, jeton de 256 bits, vérification stricte de l'en-tête `Origin`, cf. section 7.5 |
+| Edge remplacé par un exécutable arbitraire | Résolution du chemin par le registre, jamais par le `PATH`, cf. section 7.2 |
+| Fuite de données du profil de navigation | Profil temporaire dédié via `--user-data-dir`, supprimé en fin de session |
 | Inondation de signalisation | Limitation de débit par client, cf. section 6.4 |
 
 Un point mérite d'être souligné auprès des décideurs : ajouter du contrôle
@@ -446,16 +755,22 @@ sécurité indépendante avant mise en production est fortement conseillée.
 
 | Composant | Licence | Compatible NVDA (GPLv2) |
 |---|---|---|
-| `pion/webrtc` | MIT | Oui |
-| `aiortc` | BSD-3 | Oui |
-| libvpx (VP8/VP9) | BSD | Oui |
+| Microsoft Edge | Propriétaire, préinstallé | Oui : dépendance externe au système, aucun code lié ni redistribué |
+| Page locale et pont WebSocket | Écrits pour ce projet | Oui |
+| libvpx (VP8/VP9), embarqué dans Edge | BSD | Oui |
 | coturn | BSD-3 | Oui |
+| `pion/webrtc` (repli documenté) | MIT | Oui |
+| `aiortc` (écarté) | BSD-3 | Oui |
 | UltraVNC, TigerVNC, x11vnc | GPLv2 | Oui pour NVDA, mais exclut toute réutilisation propriétaire |
 | H.264 / MPEG LA | Brevets | À écarter |
 
 L'ensemble de la pile recommandée est donc compatible avec une distribution
 libre, y compris si une variante propriétaire devait être envisagée un jour, ce
 que l'option VNC aurait interdit.
+
+Le recours à Edge ne pose pas de difficulté de licence : il s'agit d'un logiciel
+déjà présent sur le système, invoqué comme une application externe. Rien n'en est
+redistribué avec le greffon, et aucun lien de code n'est établi.
 
 ---
 
@@ -475,27 +790,29 @@ suivantes :
 - Le projet est peu actif, et sa base de code est ancienne.
 
 Ce qui reste vrai de l'idée d'origine : la capture d'écran et l'injection
-d'entrées, techniques éprouvées par VNC, sont exactement ce que le helper doit
-faire. Seul le transport change.
+d'entrées, techniques éprouvées par VNC, sont exactement ce qu'il faut faire.
+Dans l'architecture retenue, la capture est déléguée à Edge et l'injection reste
+en Python : il n'y a donc rien à réécrire de ce côté.
 
 ---
 
 ## 12. Phasage proposé
 
-| Phase | Contenu | Livrable vérifiable |
-|---|---|---|
-| 0 | Spécification du protocole, revue de sécurité de conception | Ce document, amendé et validé |
-| 1 | Serveur Go : capacités, routage ciblé, TURN REST, configuration, tests | `go test ./...` vert, serveur rétrocompatible |
-| 2 | Déploiement coturn et validation ICE de bout en bout | Deux pairs établissent une session, taux de repli TURN mesuré |
-| 3 | Helper Go : capture DXGI, VP8, sens slave vers master uniquement | Flux visible, sans contrôle |
-| 4 | Interface add-on : consentement, fenêtre d'affichage, arrêt d'urgence | Parcours utilisateur complet |
-| 5 | Canal de données : souris puis clavier, session utilisateur | Contrôle fonctionnel |
-| 6 | Qualité adaptative, VP9, statistiques, diagnostic | Métriques exposées |
-| 7 | Bureau sécurisé | Contrôle de l'écran de connexion, après audit |
+| Phase | Lot | Contenu | Livrable vérifiable |
+|---|---|---|---|
+| 0 | — | Spécification du protocole, revue de sécurité de conception | Ce document, amendé et validé |
+| 1 | — | Serveur Go : capacités, routage ciblé, TURN REST, configuration, tests | **Fait**, `go test ./...` vert, serveur rétrocompatible |
+| 2 | 1 | Injection souris par `ctypes`, message `mouse` sur le canal historique, consentement | **Fait**, le pointeur distant suit le pointeur local, NVDA annonce ce qu'il survole |
+| 3 | 1 | Clavier étendu, molette, multi-écrans et DPI mixte | Aucun décalage sur configuration hétérogène |
+| 4 | 2 | Détection d'Edge, pont local à jeton, page de signalisation | **Écrit**, reste à éprouver entre deux postes réels |
+| 5 | 2 | Fenêtre discrète côté esclave, sélection de source, cycle de vie et nettoyage | Aucune fenêtre parasite, profil temporaire supprimé |
+| 6 | 2 | Interface : consentement, indicateur permanent, arrêt d'urgence | Parcours utilisateur complet |
+| 7 | 2 | Déploiement coturn et validation sous NAT symétrique | Session établie via relais, taux de repli mesuré |
+| 8 | 2 | Bascule des entrées sur le `DataChannel`, qualité adaptative, statistiques | Latence réduite, métriques exposées |
 
-Les phases 1 et 2 sont indépendantes des phases 3 et suivantes : le serveur peut
-être préparé et déployé avant que le moindre helper n'existe, sans effet sur les
-clients actuels.
+Le lot 1, phases 2 et 3, est **livrable seul** : il ne dépend ni d'Edge, ni de
+coturn, ni de WebRTC, et fonctionne déjà contre le serveur de production actuel.
+C'est le point de départ recommandé.
 
 ---
 
@@ -508,7 +825,13 @@ clients actuels.
 3. L'infrastructure TURN sera-t-elle hébergée sur le même serveur que
    `nvdaremote.accessolutions.fr`, ou sur une machine dédiée ? La seconde option
    est préférable pour isoler les pics de trafic.
-4. Le helper Go sera-t-il signé numériquement ? C'est nécessaire pour limiter les
-   alertes des antivirus et indispensable pour le mode bureau sécurisé.
-5. Souhaite-t-on également transporter l'audio du poste distant sur la même
+4. Quelle version minimale d'Edge exiger, et comment la vérifier avant de
+   déclarer la capacité `screen_share/1` ? La maquette a été validée sur
+   151.0.4129.72.
+5. `--use-fake-ui-for-media-stream` accorde toutes les permissions média au
+   profil temporaire, cf. 7.4. Le confinement décrit y est-il jugé suffisant,
+   ou faut-il exiger en plus les stratégies d'entreprise sur les parcs gérés ?
+6. Quelle source la fausse interface sélectionne-t-elle sur un poste
+   **multi-écrans** ? Non observé, la mesure ayant été faite sur un écran unique.
+7. Souhaite-t-on également transporter l'audio du poste distant sur la même
    session, ou s'en tenir à la vidéo ?

@@ -3,3 +3,7 @@ dist/
 *.log
 *.pid
 nvdaRemoteServer.json
+
+# Throwaway measurement scripts and their output, kept out of the history.
+prototype/
+.tmp-deploy-test.sh

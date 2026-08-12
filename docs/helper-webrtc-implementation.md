@@ -1,5 +1,24 @@
 # Spécification d'implémentation — helper de partage d'écran WebRTC
 
+> **Statut : repli documenté, non retenu pour l'implémentation.**
+>
+> Le moteur vidéo retenu est **Microsoft Edge**, piloté par une page locale sur
+> `127.0.0.1`, décrit en section 7 de
+> [docs/partage-ecran-webrtc.md](docs/partage-ecran-webrtc.md). Il supprime le
+> besoin de ce helper : ni capture, ni encodeur, ni pile WebRTC à écrire.
+>
+> Ce document reste valable sur deux points, qui font foi :
+>
+> - le **protocole de signalisation** des sections 2 et 3, commun aux deux
+>   moteurs et déjà implémenté côté serveur ;
+> - le **format des événements d'entrée** et les règles d'injection `SendInput`
+>   de la section 8, qui s'appliquent tels quels à l'injection en Python par
+>   `ctypes`, indépendamment du moteur vidéo.
+>
+> Les sections 5, 6 et 7 (IPC du helper, capture DXGI, encodage libvpx) ne sont
+> conservées qu'à titre de référence, au cas où un helper natif redeviendrait
+> nécessaire.
+
 Ce document décrit précisément ce qu'il faut écrire côté client pour utiliser la
 signalisation ajoutée au serveur NVDA Remote. Il complète
 [docs/partage-ecran-webrtc.md](docs/partage-ecran-webrtc.md), qui expose les choix
