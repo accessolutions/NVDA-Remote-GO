@@ -134,7 +134,7 @@ The included certificate file is a single file that contains an automatically ge
 # Usage
 
 ```console
-$ nvdaRemoteServer [-pid-file /path/to/pid/file] [-conf-file /path/to/configuration/file] [-conf-read=true] [-gen-conf-file /path/to/generated/configuration/file] [-gen-conf-dir=false] [-create=false] [-address :6837] [-cert-file /path/to/ssl/certificate] [-key-file /path/to/ssl/key] [-gen-cert-file /path/to/created/cert/file] [-motd "Example message of the day."] [-motd-always-display=false] [-send-origin=true] [-screen-share=false] [-turn-url stun:turn.example.com:3478] [-turn-secret secret] [-turn-secret-file /path/to/turn/secret] [-turn-ttl 3600] [-log-level=0] [-log-file /path/to/log/file] [-admin=false] [-admin-path /admin] [-geoip-api-url https://ipwho.is] [-launch=true]
+$ nvdaRemoteServer [-pid-file /path/to/pid/file] [-conf-file /path/to/configuration/file] [-conf-read=true] [-gen-conf-file /path/to/generated/configuration/file] [-gen-conf-dir=false] [-create=false] [-address :6837] [-cert-file /path/to/ssl/certificate] [-key-file /path/to/ssl/key] [-gen-cert-file /path/to/created/cert/file] [-motd "Example message of the day."] [-motd-always-display=false] [-send-origin=true] [-screen-share=false] [-turn-url stun:turn.example.com:3478] [-turn-secret secret] [-turn-secret-file /path/to/turn/secret] [-turn-ttl 3600] [-log-level=0] [-log-file /path/to/log/file] [-admin=false] [-admin-path /admin] [-admin-data-file /data/admin-history.db] [-geoip-api-url https://ipwho.is] [-launch=true]
 ```
 
 Please note that the brackets around a parameter indicate that it is optional.
@@ -341,6 +341,25 @@ Enable the web administration dashboard. The dashboard is served by the secure W
 #### `-admin-path`
 
 Change the URL path of the web administration dashboard. The default path is `/admin`.
+
+
+#### `-admin-data-file`
+
+Path to the SQLite database used by the administration history. The database
+contains the connection sessions and periodic resource measurements. If this
+parameter is empty, the server stores `admin-history.db` next to the admin
+password file, or in the current directory when no password file is used.
+Use a persistent volume when running in Docker. There is no automatic data
+retention limit.
+
+The dashboard's **Historique** link provides three views: daily, monthly and
+yearly. Daily rows open a details page with hourly statistics, connection
+start/end times, durations, IP addresses, roles and channels. CPU metrics show
+both the global machine usage and the usage of the Go server process. Memory
+metrics show both global system memory and the Go process allocation.
+
+All history periods use the `Europe/Paris` timezone. The number of unique
+connections is based on distinct IP addresses observed during the period.
 
 
 #### `-geoip-api-url`

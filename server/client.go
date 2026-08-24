@@ -35,6 +35,7 @@ type Client struct {
 	closed            bool
 	sd                chan []byte
 	capabilities      []string
+	historyID         int64
 	sigCount          int
 	sigWindow         time.Time
 }
@@ -97,6 +98,7 @@ func (c *Client) SetConnectionType(ctype string) {
 	defer c.Unlock()
 	c.Lock()
 	c.connectionType = ctype
+	go updateHistoryClient(c)
 }
 
 func (c *Client) GetPort() int {

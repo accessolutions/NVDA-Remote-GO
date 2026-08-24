@@ -90,6 +90,7 @@ func (c *ClientChannel) Add(client *Client, password string) {
 	}
 	c.ClientsAll[id] = client
 	client.SetChannel(c)
+	updateHistoryClient(client)
 	scdb := Data{
 		Type:    "client_joined",
 		Channel: c.name,

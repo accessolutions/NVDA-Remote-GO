@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"os"
+	"path/filepath"
 	"strconv"
 )
 
@@ -105,6 +106,7 @@ func Configure() error {
 	flag.BoolVar(&adminEnabled, "admin", DEFAULT_ADMIN, "Enable the web administration dashboard. The login is fixed to \"administrator\" and the password is defined on the first connection to the dashboard. The dashboard requires a WebSocket listener (-ws-address) to be reachable.")
 	flag.StringVar(&adminPasswordFile, "admin-password-file", DEFAULT_ADMIN_PASSWORD_FILE, "Path to the file used to store the bcrypt-hashed admin password so it survives restarts. If empty, the password is kept in memory only and must be set again after each restart. Use a path on a persistent volume when running in a container.")
 	flag.StringVar(&adminPath, "admin-path", DEFAULT_ADMIN_PATH, "URL path on which the web administration dashboard is served, such as \"/admin\".")
+	flag.StringVar(&adminDataFile, "admin-data-file", DEFAULT_ADMIN_DATA_FILE, "Path to the SQLite file used to store the administration history. If empty, it is stored next to -admin-password-file, or in the current directory.")
 	flag.StringVar(&geoIPAPIURL, "geoip-api-url", DEFAULT_GEOIP_API_URL, "Base URL of the IP geolocation API used by the admin dashboard. Set it to empty to disable geolocation.")
 
 	flag.Parse()
@@ -133,6 +135,16 @@ func Configure() error {
 	if cfg_err != nil {
 		Log_close()
 		os.Exit(1)
+	}
+	if AdminEnabled() {
+		if adminDataFile == "" {
+			if adminPasswordFile != "" {
+				adminDataFile = filepath.Join(filepath.Dir(adminPasswordFile), "admin-history.db")
+			} else {
+				adminDataFile = "admin-history.db"
+			}
+		}
+		startAdminHistory()
 	}
 
 	if !screenShare && (len(turnUrls) > 0 || !default_turn_secret(turnSecret) || !default_turn_secret_file(turnSecretFile)) {

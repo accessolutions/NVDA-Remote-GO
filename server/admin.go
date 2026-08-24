@@ -29,6 +29,7 @@ var (
 	adminEnabled      bool
 	adminPasswordFile string
 	adminPath         = DEFAULT_ADMIN_PATH
+	adminDataFile     = DEFAULT_ADMIN_DATA_FILE
 	geoIPAPIURL       = DEFAULT_GEOIP_API_URL
 )
 
@@ -328,9 +329,12 @@ var (
 	cpuSampleMu   sync.Mutex
 	cpuLastTotal  uint64
 	cpuLastIdle   uint64
+	cpuLastProcess uint64
 	cpuLastPct    float64
+	cpuLastProcessPct float64
 	cpuLastSample time.Time
 	cpuHaveSample bool
+	cpuHaveValue  bool
 )
 
 // systemCPUPct returns the system-wide CPU usage percentage computed from the
@@ -338,16 +342,33 @@ var (
 // return value is false when the metric is unavailable. A recently computed
 // value is reused so concurrent dashboard clients do not disturb the delta.
 func systemCPUPct() (float64, bool) {
+	systemPct, _, ok := cpuMetrics()
+	return systemPct, ok
+}
+
+// processCPUPct returns the CPU percentage used by this server process. The
+// value is expressed like the value shown by common process monitors: 100% is
+// one fully used CPU core and a process can therefore exceed 100% on a
+// multi-core machine. The second return value is false when the metric is
+// unavailable.
+func processCPUPct() (float64, bool) {
+	_, processPct, ok := cpuMetrics()
+	return processPct, ok
+}
+
+// cpuMetrics returns cached system-wide and process CPU percentages. Both
+// values are sampled together so the historical metrics use the same interval.
+func cpuMetrics() (float64, float64, bool) {
 	cpuSampleMu.Lock()
 	defer cpuSampleMu.Unlock()
 
 	if cpuHaveSample && time.Since(cpuLastSample) < time.Second {
-		return cpuLastPct, true
+		return cpuLastPct, cpuLastProcessPct, cpuHaveValue
 	}
 
 	data, err := os.ReadFile("/proc/stat")
 	if err != nil {
-		return 0, false
+		return 0, 0, false
 	}
 	content := string(data)
 	line := content
@@ -356,7 +377,7 @@ func systemCPUPct() (float64, bool) {
 	}
 	fields := strings.Fields(line)
 	if len(fields) < 5 || fields[0] != "cpu" {
-		return 0, false
+		return 0, 0, false
 	}
 	var total, idle uint64
 	for i := 1; i < len(fields); i++ {
@@ -369,23 +390,39 @@ func systemCPUPct() (float64, bool) {
 			idle += v
 		}
 	}
+	processTicks, err := processCPUTicks()
+	if err != nil {
+		return 0, 0, false
+	}
 
 	if !cpuHaveSample {
 		cpuLastTotal = total
 		cpuLastIdle = idle
+		cpuLastProcess = processTicks
 		cpuLastSample = time.Now()
 		cpuHaveSample = true
-		return 0, true
+		cpuHaveValue = false
+		return 0, 0, false
 	}
 
+	if total < cpuLastTotal || idle < cpuLastIdle || processTicks < cpuLastProcess {
+		cpuLastTotal = total
+		cpuLastIdle = idle
+		cpuLastProcess = processTicks
+		cpuLastSample = time.Now()
+		cpuHaveValue = false
+		return 0, 0, false
+	}
 	totalDelta := total - cpuLastTotal
 	idleDelta := idle - cpuLastIdle
+	processDelta := processTicks - cpuLastProcess
 	cpuLastTotal = total
 	cpuLastIdle = idle
+	cpuLastProcess = processTicks
 	cpuLastSample = time.Now()
 
 	if totalDelta == 0 {
-		return cpuLastPct, true
+		return cpuLastPct, cpuLastProcessPct, cpuHaveValue
 	}
 	pct := (float64(totalDelta-idleDelta) / float64(totalDelta)) * 100
 	if pct < 0 {
@@ -393,8 +430,41 @@ func systemCPUPct() (float64, bool) {
 	} else if pct > 100 {
 		pct = 100
 	}
+	processPct := float64(processDelta) / float64(totalDelta) * float64(runtime.NumCPU()) * 100
+	if processPct < 0 {
+		processPct = 0
+	}
 	cpuLastPct = pct
-	return pct, true
+	cpuLastProcessPct = processPct
+	cpuHaveValue = true
+	return pct, processPct, true
+}
+
+func processCPUTicks() (uint64, error) {
+	data, err := os.ReadFile("/proc/self/stat")
+	if err != nil {
+		return 0, err
+	}
+	line := string(data)
+	endName := strings.LastIndexByte(line, ')')
+	if endName < 0 || endName+2 >= len(line) {
+		return 0, strconv.ErrSyntax
+	}
+	fields := strings.Fields(line[endName+2:])
+	// The slice starts at field 3 (state), so fields 11 and 12 are utime
+	// (field 14) and stime (field 15) from procfs' process stat format.
+	if len(fields) < 13 {
+		return 0, strconv.ErrSyntax
+	}
+	utime, err := strconv.ParseUint(fields[11], 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	stime, err := strconv.ParseUint(fields[12], 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return utime + stime, nil
 }
 
 // registerAdminRoutes registers the admin dashboard handlers on the provided
@@ -404,12 +474,15 @@ func registerAdminRoutes(mux *http.ServeMux) {
 		return
 	}
 	loadAdminPassword()
+	startAdminHistory()
 	base := adminPath
 	mux.HandleFunc(base, handleAdminDashboard)
 	mux.HandleFunc(base+"/login", handleAdminLogin)
 	mux.HandleFunc(base+"/logout", handleAdminLogout)
 	mux.HandleFunc(base+"/setup", handleAdminSetup)
 	mux.HandleFunc(base+"/events", handleAdminEvents)
+	mux.HandleFunc(base+"/history", handleAdminHistory)
+	mux.HandleFunc(base+"/history/day", handleAdminHistoryDay)
 	if adminPasswordDefined() {
 		Log(LOG_INFO, "Admin dashboard enabled at "+base+" (user: "+AdminUsername+")")
 	} else {
@@ -689,6 +762,8 @@ header{display:flex;align-items:center;justify-content:space-between;flex-wrap:w
 h1{font-size:1.35rem;margin:0}
 a.logout{color:#93c5fd;text-decoration:none}
 a.logout:hover{text-decoration:underline}
+a.history{color:#93c5fd;text-decoration:none;margin-right:1rem}
+a.history:hover{text-decoration:underline}
 .stats{margin:1.25rem 0}
 .stat-line{background:#161f2b;border-radius:8px;padding:.65rem .95rem;margin:.45rem 0;font-size:1.05rem}
 .stat-line .label{color:#9aa7b4}
@@ -706,7 +781,7 @@ tr:hover td{background:#1b2534}
 <body>
 <header>
 <h1>NVDA REMOTE GO Accessolutions</h1>
-<a class="logout" href="ADMINPATH/logout">Se déconnecter</a>
+<span><a class="history" href="ADMINPATH/history">Historique</a><a class="logout" href="ADMINPATH/logout">Se déconnecter</a></span>
 </header>
 <section class="stats">
 <p class="stat-line"><span class="label">Nombre de connectés :</span><span class="value" id="stat-connected">-</span></p>

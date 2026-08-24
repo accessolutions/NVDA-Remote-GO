@@ -27,6 +27,7 @@ func AddClient(c *Client) {
 	sl.Unlock()
 	if AdminEnabled() {
 		requestGeoLocation(ip)
+		recordHistoryConnection(c)
 	}
 }
 
@@ -46,6 +47,9 @@ func RemoveClient(c *Client) {
 		return
 	}
 	cc := c.GetChannel()
+	if AdminEnabled() {
+		finishHistoryConnection(c)
+	}
 	if cc != nil {
 		cc.Remove(c)
 	}
