@@ -23,6 +23,7 @@ var addresses AddressList
 var (
 	wsAddresses AddressList
 	wsPath      string
+	wsRaw       bool = DEFAULT_WS_RAW
 )
 
 var cert string
@@ -86,6 +87,7 @@ func Configure() error {
 
 	flag.Var(&wsAddresses, "ws-address", "Address the server will listen on for secure WebSocket (wss) connections, in the format ip:port, such as \":443\". This lets clients connect through corporate HTTP proxies. The port must be between 1 and 65536. You can declare this parameter more than once. If unset, no WebSocket listener is started.")
 	flag.StringVar(&wsPath, "ws-path", DEFAULT_WS_PATH, "URL path on which the server accepts WebSocket connections, such as \"/\" or \"/ws\".")
+	flag.BoolVar(&wsRaw, "ws-raw", DEFAULT_WS_RAW, "Also accept the historic newline delimited NVDA Remote protocol on the WebSocket addresses, by detecting which protocol a client speaks once the TLS handshake is complete. This lets older clients keep connecting to port 443. Set it to false to restore the WebSocket only behavior.")
 
 	flag.IntVar(&loglevel, "log-level", DEFAULT_LOG_LEVEL, "Choose what log level you wish to use. Any value below -1 will be ignored.")
 	flag.StringVar(&logfile, "log-file", DEFAULT_LOG_FILE, "Choose what log file you wish to use in addition to logging output to the console. If the file can't be created or open for writing, the program will fall back to console logging only.")
@@ -260,9 +262,16 @@ func Configure() error {
 	if wsPath == "" {
 		wsPath = DEFAULT_WS_PATH
 	}
+	if !default_ws_raw(wsRaw) && len(wsAddresses) == 0 {
+		Log(LOG_INFO, "Warning: the -ws-raw parameter is set but no WebSocket listener (-ws-address) is configured, so it will be ignored.")
+	}
 	for _, addr := range wsAddresses {
 		Servers = append(Servers, NewWebSocketServer(addr, config, wsPath))
-		Log(LOG_DEBUG, "Starting WebSocket server listening on address "+addr+" at path "+wsPath)
+		logstr := "Starting WebSocket server listening on address " + addr + " at path " + wsPath
+		if wsRaw {
+			logstr += ", also accepting the historic NVDA Remote protocol on the same address"
+		}
+		Log(LOG_DEBUG, logstr)
 	}
 
 	return nil

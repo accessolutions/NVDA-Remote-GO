@@ -42,9 +42,21 @@ func (s *Server) listenWebSocket() error {
 	httpServer := &http.Server{Handler: mux}
 
 	s.Lock()
+	s.resolved = listener.Addr().String()
 	s.ctx, s.Stop = context.WithCancel(mctx)
+	rawFallback := s.rawFallback
 	s.Add(1)
 	s.Unlock()
+
+	// When the raw fallback is enabled, the listener is wrapped so that clients
+	// speaking the historic newline delimited protocol are served directly
+	// instead of being rejected by the HTTP server. The server context must
+	// already be set at this point, since those clients are attached to it.
+	var serveListener net.Listener = listener
+	if rawFallback {
+		serveListener = newProtocolListener(listener, s)
+		Log(LOG_DEBUG, "The server at "+address+" also accepts the historic NVDA Remote protocol alongside WebSocket connections.")
+	}
 
 	// Stopping our server.
 	go func() {
@@ -55,12 +67,12 @@ func (s *Server) listenWebSocket() error {
 		}
 		msl.Unlock()
 		_ = httpServer.Close()
-		listener.Close()
+		serveListener.Close()
 		s.Done()
 	}()
 
 	go func() {
-		err := httpServer.Serve(listener)
+		err := httpServer.Serve(serveListener)
 		if err != nil && err != http.ErrServerClosed {
 			msl.Lock()
 			if !stoppingServers {

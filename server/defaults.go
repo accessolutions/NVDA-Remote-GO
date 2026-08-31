@@ -24,6 +24,7 @@ var DEFAULT_ADDRESS string = ":6837"
 var (
 	DEFAULT_WS_ADDRESS string = ""
 	DEFAULT_WS_PATH    string = "/"
+	DEFAULT_WS_RAW     bool   = true
 )
 
 var (
@@ -162,4 +163,8 @@ func default_gen_conf_dir(p bool) bool {
 
 func default_conf_read(p bool) bool {
 	return (p == DEFAULT_CONF_READ)
+}
+
+func default_ws_raw(p bool) bool {
+	return (p == DEFAULT_WS_RAW)
 }

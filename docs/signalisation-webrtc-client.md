@@ -137,11 +137,13 @@ Requête, sans paramètre :
 Réponse :
 
 ```json
-{"type": "turn_credentials", "ice_servers": [{"urls": ["stun:nvdaremote.accessolutions.fr:3478"]}, {"urls": ["turn:nvdaremote.accessolutions.fr:3478?transport=udp"], "username": "1786425600:7", "credential": "n2K9m0Q6Yy0Tb1cVv8bV0z5R3fA="}], "ttl": 3600}
+{"type": "turn_credentials", "ice_servers": [{"urls": ["stun:nvdaremote.example.com:3478"]}, {"urls": ["turn:nvdaremote.example.com:3478?transport=udp"], "username": "1786425600:7", "credential": "EXEMPLE_HMAC_BASE64"}], "ttl": 3600}
 ```
 
 - `username` a la forme `<expiration_unix>:<id_utilisateur>`.
-- `credential` est `base64(HMAC-SHA1(secret_partagé, username))`.
+- `credential` est `base64(HMAC-SHA1(secret_partagé, username))`. La valeur
+  ci-dessus est un remplissage : un identifiant réel ne doit jamais être
+  recopié dans un document versionné.
 - `ttl` est la durée de validité en secondes.
 
 Ces identifiants doivent être demandés **juste avant** de créer la

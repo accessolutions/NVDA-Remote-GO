@@ -13,6 +13,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 package server
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"net"
@@ -27,10 +28,12 @@ type Server struct {
 	sync.Mutex
 	sync.WaitGroup
 	address           string // Address to open connection: localhost:9999
+	resolved          string // Address the listener is actually bound to.
 	config            *tls.Config
 	messageTerminator byte
 	websocket         bool
 	wsPath            string
+	rawFallback       bool
 	ctx               context.Context
 	Stop              context.CancelFunc
 }
@@ -76,11 +79,20 @@ func (s *Server) Listen() error {
 		return err
 	}
 	s.Lock()
+	s.resolved = listener.Addr().String()
 	s.ctx, s.Stop = context.WithCancel(mctx)
 	s.Add(1)
 	s.Unlock()
 	go s.accept(listener)
 	return err
+}
+
+// Addr returns the address the listener is actually bound to, which differs from
+// the configured address when port 0 is used. It is empty before Listen starts.
+func (s *Server) Addr() string {
+	s.Lock()
+	defer s.Unlock()
+	return s.resolved
 }
 
 func (s *Server) accept(listener net.Listener) {
@@ -109,25 +121,34 @@ func (s *Server) accept(listener net.Listener) {
 			s.Stop()
 			break
 		}
-		msl.Lock()
-		s.Lock()
-		client := &Client{
-			conn:              newRawConn(conn, s.messageTerminator),
-			ip:                getIP(conn),
-			port:              getPort(conn),
-			protocol:          "tcp",
-			connectedAt:       time.Now(),
-			s:                 s,
-			messageTerminator: s.messageTerminator,
-			closed:            false,
-		}
-		client.ctx, client.Close = context.WithCancel(s.ctx)
-		s.Add(1)
-		AddClient(client)
-		s.Unlock()
-		msl.Unlock()
+		client := s.newRawClient(conn, nil)
 		go client.listen()
 	}
+}
+
+// newRawClient registers a connection that speaks the historic newline delimited
+// NVDA Remote protocol. The reader may be nil, or may be a buffered reader that
+// already holds bytes read from the connection during protocol detection. The
+// returned client is registered but not started, the caller must run listen.
+func (s *Server) newRawClient(conn net.Conn, reader *bufio.Reader) *Client {
+	msl.Lock()
+	s.Lock()
+	client := &Client{
+		conn:              newRawConnWithReader(conn, reader, s.messageTerminator),
+		ip:                getIP(conn),
+		port:              getPort(conn),
+		protocol:          "tcp",
+		connectedAt:       time.Now(),
+		s:                 s,
+		messageTerminator: s.messageTerminator,
+		closed:            false,
+	}
+	client.ctx, client.Close = context.WithCancel(s.ctx)
+	s.Add(1)
+	AddClient(client)
+	s.Unlock()
+	msl.Unlock()
+	return client
 }
 
 // Creates new tcp server instance.
@@ -147,7 +168,9 @@ func NewWithTLSConfig(address string, config *tls.Config) *Server {
 }
 
 // NewWebSocketServer creates a new server instance that accepts WebSocket
-// connections over HTTPS on the given address and path.
+// connections over HTTPS on the given address and path. Unless the raw fallback
+// is disabled, the same address also accepts the historic newline delimited
+// NVDA Remote protocol, so that older clients keep working on port 443.
 func NewWebSocketServer(address string, config *tls.Config, path string) *Server {
 	server := NewWithTLSConfig(address, config)
 	server.websocket = true
@@ -155,6 +178,7 @@ func NewWebSocketServer(address string, config *tls.Config, path string) *Server
 		path = "/"
 	}
 	server.wsPath = path
+	server.rawFallback = wsRaw
 	return server
 }
 

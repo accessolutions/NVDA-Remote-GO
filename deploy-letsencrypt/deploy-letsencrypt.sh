@@ -5,9 +5,9 @@
 # Bascule le serveur NVDA Remote (conteneur Docker) sur un certificat TLS
 # signe par Let's Encrypt pour le domaine, au lieu du certificat auto-signe.
 #
-# METHODE REELLEMENT UTILISEE sur le serveur de production (sd-david) :
-#   - Un serveur web (Apache) ecoute deja sur le port 80 de l'hote et sert le
-#     DocumentRoot /var/www/html pour le domaine.
+# METHODE REELLEMENT UTILISEE en production :
+#   - Un serveur web ecoute deja sur le port 80 de l'hote et sert le
+#     DocumentRoot pour le domaine.
 #   - On y publie le challenge HTTP-01 de Let's Encrypt (webroot), avec une
 #     exception d'authentification limitee au chemin .well-known/acme-challenge.
 #   - certbot (conteneur jetable) obtient le certificat, stocke dans un volume
@@ -30,33 +30,45 @@
 # =============================================================================
 set -eu
 
-# --------------------------- Parametres (a adapter) --------------------------
-DOMAIN="nvdaremote.accessolutions.fr"
-ADDITIONAL_DOMAIN="remote.accessolutions.fr"
-EMAIL="contact@accessolutions.fr"
+# --------------------------- Parametres --------------------------------------
+# Toutes les valeurs ci-dessous peuvent etre surchargees, sans modifier ce
+# script, par un fichier .env place a cote de lui. Copiez .env.example en .env
+# et adaptez-le. Le fichier .env n'est jamais versionne : c'est la qu'il faut
+# mettre tout ce qui est propre a votre installation, et tout ce qui est
+# sensible. Ce script ne contient volontairement aucun secret.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "${SCRIPT_DIR}/.env" ]; then
+    # shellcheck disable=SC1091
+    . "${SCRIPT_DIR}/.env"
+fi
+
+DOMAIN="${DOMAIN:-nvdaremote.example.com}"
+ADDITIONAL_DOMAIN="${ADDITIONAL_DOMAIN:-remote.example.com}"
+EMAIL="${EMAIL:-contact@example.com}"
 
 # DocumentRoot du vhost qui sert les deux domaines sur le port 80 (webroot du challenge).
-WEBROOT="/var/www/html"
+WEBROOT="${WEBROOT:-/var/www/html}"
 
 # Conteneur NVDA Remote existant.
-SERVER_NAME="nvdaremote"
-SERVER_IMAGE="nvdaremoteserver-docker"
+SERVER_NAME="${SERVER_NAME:-nvdaremote}"
+SERVER_IMAGE="${SERVER_IMAGE:-nvdaremoteserver-docker}"
 # Arguments de lancement du serveur (hors cert/key, ajoutes automatiquement).
-# Ici : WebSocket securise sur 443 en plus du TLS brut sur 6837.
-SERVER_ARGS="-conf-read=false -ws-address :443"
+# Ici : WebSocket securise sur 443, qui accepte aussi le protocole historique
+# grace au multiplexage, en plus du TLS historique sur 6837.
+SERVER_ARGS="${SERVER_ARGS:--conf-read=false -ws-address :443}"
 # Ports publies par le conteneur (format -p de docker run).
-SERVER_PORTS="-p 443:443 -p 6837:6837"
+SERVER_PORTS="${SERVER_PORTS:--p 443:443 -p 6837:6837}"
 
 # Volumes Docker pour certbot.
-VOL_ETC="le-etc"          # /etc/letsencrypt (certificats + config)
-VOL_LIB="le-lib"          # /var/lib/letsencrypt (etat interne certbot)
+VOL_ETC="${VOL_ETC:-le-etc}"          # /etc/letsencrypt (certificats + config)
+VOL_LIB="${VOL_LIB:-le-lib}"          # /var/lib/letsencrypt (etat interne certbot)
 
 CERT="/etc/letsencrypt/live/${DOMAIN}/fullchain.pem"
 KEY="/etc/letsencrypt/live/${DOMAIN}/privkey.pem"
 CERT_NAME="${DOMAIN}"
 
 # Mettre STAGING=1 pour un test a blanc (aucun quota consomme).
-STAGING=0
+STAGING="${STAGING:-0}"
 
 log() { echo ">>> $*"; }
 

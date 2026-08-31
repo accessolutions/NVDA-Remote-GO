@@ -1,28 +1,46 @@
-# Certificat Let's Encrypt pour nvdaremote.accessolutions.fr et remote.accessolutions.fr (serveur NVDA Remote)
+# Certificat Let's Encrypt pour le serveur NVDA Remote
 
 Cette procédure fait servir au serveur NVDA Remote un **certificat TLS signé par
-Let's Encrypt** pour les domaines `nvdaremote.accessolutions.fr` et
-`remote.accessolutions.fr`, au lieu du certificat
-auto-signé par défaut. Certains proxies exigent un **nom de domaine** avec un
-certificat validé par une autorité reconnue ; se connecter à
-`nvdaremote.accessolutions.fr` ou `remote.accessolutions.fr` (et non à une adresse IP)
-résout ce problème.
+Let's Encrypt** pour un ou deux domaines, au lieu du certificat auto-signé par
+défaut. Certains proxies exigent un **nom de domaine** avec un certificat validé
+par une autorité reconnue ; se connecter à un nom de domaine (et non à une
+adresse IP) résout ce problème.
 
-## État déployé (serveur `sd-david`, 31/07/2026)
+## Configuration
 
-- Domaines : `nvdaremote.accessolutions.fr` et `remote.accessolutions.fr` (DNS OK).
-- Le conteneur `nvdaremote` (image `nvdaremoteserver-docker`) écoute en TLS
-  signé sur **6837** (TLS brut) et **443** (WebSocket sécurisé, `-ws-address :443`).
-- Certificat Let's Encrypt stocké dans le volume Docker `le-etc`
-  (`/etc/letsencrypt/live/nvdaremote.accessolutions.fr/`), monté en lecture seule dans
-  le conteneur.
+Tous les paramètres se trouvent dans un fichier `.env` local, **jamais
+versionné**. Partez du modèle fourni :
+
+```sh
+cp .env.example .env
+$EDITOR .env
+```
+
+Les deux scripts lisent ce fichier automatiquement. Si `.env` est absent, des
+valeurs d'exemple neutres sont utilisées, ce qui empêche un déploiement
+accidentel sur un domaine qui ne vous appartient pas.
+
+Aucun secret ne transite par ce fichier. Les secrets du serveur restent dans des
+fichiers montés dans le conteneur, avec des droits restreints :
+`-turn-secret-file` pour le secret TURN, `-admin-password-file` pour le
+condensat du mot de passe d'administration, et le volume certbot en lecture
+seule pour la clé privée TLS.
+
+## État type d'un déploiement
+
+- Le conteneur du serveur écoute en TLS signé sur **6837** (protocole
+  historique) et sur **443** (WebSocket sécurisé, `-ws-address :443`, qui accepte
+  également le protocole historique grâce au multiplexage, voir
+  [TCP-and-WebSocket.md](../TCP-and-WebSocket.md)).
+- Certificat Let's Encrypt stocké dans un volume Docker, monté en lecture seule
+  dans le conteneur.
 - Validité **90 jours**, renouvellement automatique via cron utilisateur.
 
 ## Comment ça marche
 
-Le port 80 de l'hôte est déjà occupé par **Apache** (DocumentRoot
-`/var/www/html` pour le domaine). On ne peut donc pas y lancer un nginx dédié.
-La validation Let's Encrypt (challenge **HTTP-01**) passe par ce webroot Apache :
+Le port 80 de l'hôte est généralement déjà occupé par un serveur web. On ne peut
+donc pas y lancer un nginx dédié. La validation Let's Encrypt (challenge
+**HTTP-01**) passe par le webroot existant :
 
 1. On crée `/var/www/html/.well-known/acme-challenge/` avec un `.htaccess`
    (`Require all granted`) pour lever l'authentification **uniquement** sur ce
@@ -40,21 +58,21 @@ La validation Let's Encrypt (challenge **HTTP-01**) passe par ce webroot Apache 
 
 | Fichier | Rôle |
 |---|---|
+| `.env.example` | Modèle de configuration. À copier en `.env`, qui n'est pas versionné. |
 | `deploy-letsencrypt.sh` | Déploiement complet (webroot + émission + conteneur + cron). |
-| `renew.sh` | Renouvellement + redémarrage conditionnel. Copié en `~/nvdaremote-renew.sh` et appelé par cron. |
+| `renew.sh` | Renouvellement + redémarrage conditionnel, appelé par cron. |
 
 ## Réexécuter / adapter
 
-Ajustez les variables en tête de `deploy-letsencrypt.sh` (`DOMAIN`,
-`ADDITIONAL_DOMAIN`, `EMAIL`,
-`WEBROOT`, `SERVER_ARGS`, `SERVER_PORTS`) puis :
+Ajustez votre fichier `.env` (`DOMAIN`, `ADDITIONAL_DOMAIN`, `EMAIL`, `WEBROOT`,
+`SERVER_ARGS`, `SERVER_PORTS`) puis :
 
 ```sh
 ./deploy-letsencrypt.sh
 ```
 
-Test à blanc sans consommer le quota Let's Encrypt : mettez `STAGING=1` en tête
-du script, lancez-le, vérifiez, puis repassez à `STAGING=0`.
+Test à blanc sans consommer le quota Let's Encrypt : mettez `STAGING=1` dans
+`.env`, lancez le script, vérifiez, puis repassez à `STAGING=0`.
 
 ## Renouvellement automatique
 
@@ -72,12 +90,14 @@ Renouvellement / vérification manuelle :
 ## Vérifications
 
 ```sh
-# Certificat servi sur 6837 (TLS brut)
-echo | openssl s_client -connect nvdaremote.accessolutions.fr:6837 2>/dev/null \
+. ./.env
+
+# Certificat servi sur 6837 (protocole historique)
+echo | openssl s_client -connect "${DOMAIN}:6837" 2>/dev/null \
   | openssl x509 -noout -issuer -subject -dates
 
-# Certificat servi sur 443 (WebSocket sécurisé)
-echo | openssl s_client -connect nvdaremote.accessolutions.fr:443 -servername nvdaremote.accessolutions.fr 2>/dev/null \
+# Certificat servi sur 443 (WebSocket securise)
+echo | openssl s_client -connect "${DOMAIN}:443" -servername "${DOMAIN}" 2>/dev/null \
   | openssl x509 -noout -issuer -dates
 ```
 
@@ -86,6 +106,7 @@ Résultat attendu : `issuer = Let's Encrypt`, avec les deux noms présents dans
 
 ## Côté client (add-on NVDA)
 
-Utilisez l'hôte **`nvdaremote.accessolutions.fr`** ou
-**`remote.accessolutions.fr`** (et non l'adresse IP), port `6837`
-(ou `443` pour le transport WebSocket sécurisé selon la configuration du client).
+Utilisez le **nom de domaine** (et non l'adresse IP), port `6837` ou `443`.
+Depuis le multiplexage, les deux ports acceptent aussi bien le protocole
+historique que le WebSocket sécurisé : les anciens clients continuent donc de
+fonctionner sur `443`. Voir [TCP-and-WebSocket.md](../TCP-and-WebSocket.md).

@@ -2,23 +2,30 @@
 # =============================================================================
 # renew.sh
 # -----------------------------------------------------------------------------
-# Renouvelle le certificat Let's Encrypt de nvdaremote.accessolutions.fr et
-# remote.accessolutions.fr si necessaire,
-# puis redemarre le conteneur nvdaremote uniquement en cas de renouvellement
+# Renouvelle le certificat Let's Encrypt du domaine si necessaire, puis
+# redemarre le conteneur du serveur uniquement en cas de renouvellement
 # effectif (le serveur Go lit le certificat au demarrage).
 #
-# Version identique a /home/accesso/nvdaremote-renew.sh installee sur le
-# serveur. Appelee par cron (voir deploy-letsencrypt.sh, 2x/jour).
+# Les parametres sont repris du fichier .env place a cote de ce script, comme
+# pour deploy-letsencrypt.sh. Aucun secret n'est stocke ici.
+#
+# Appele par cron (voir deploy-letsencrypt.sh, 2x/jour).
 #
 # certbot ne renouvelle reellement qu'a ~30 jours de l'expiration
 # (validite totale : 90 jours). Ne necessite pas root (groupe docker).
 # =============================================================================
 set -eu
 
-SERVER_NAME="nvdaremote"
-WEBROOT="/var/www/html"
-VOL_ETC="le-etc"
-VOL_LIB="le-lib"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "${SCRIPT_DIR}/.env" ]; then
+    # shellcheck disable=SC1091
+    . "${SCRIPT_DIR}/.env"
+fi
+
+SERVER_NAME="${SERVER_NAME:-nvdaremote}"
+WEBROOT="${WEBROOT:-/var/www/html}"
+VOL_ETC="${VOL_ETC:-le-etc}"
+VOL_LIB="${VOL_LIB:-le-lib}"
 FLAG="/etc/letsencrypt/nvdaremote.renewed"
 
 docker run --rm \

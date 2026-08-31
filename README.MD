@@ -1,5 +1,7 @@
 # Introduction
 
+> **Reference repository.** The official repository for this Accessolutions fork is [accessolutions/NVDA-Remote-GO](https://github.com/accessolutions/NVDA-Remote-GO), branch `main`. All development happens there. The repository [accessolutions/NVDA-Remote-GO-Server](https://github.com/accessolutions/NVDA-Remote-GO-Server) is a read only public mirror, regenerated from `main` without the administration dashboard, the geolocation and the Accessolutions deployment scripts. Do not commit to the mirror directly. The original upstream project is [tech10/nvdaRemoteServer](https://github.com/tech10/nvdaRemoteServer).
+
 Welcome to the server for the NVDARemote addon, written in the [Go programming language.](https://golang.org/) The idea for this program was enspired by [the one released here.](https://github.com/jmdaweb/NVDARemoteServer)
 
 The original server for the addon is written in [Python,](https://www.python.org/) which works well enough under most circumstances. However, there were a few reasons why I wanted to write the server in Go.
@@ -134,7 +136,7 @@ The included certificate file is a single file that contains an automatically ge
 # Usage
 
 ```console
-$ nvdaRemoteServer [-pid-file /path/to/pid/file] [-conf-file /path/to/configuration/file] [-conf-read=true] [-gen-conf-file /path/to/generated/configuration/file] [-gen-conf-dir=false] [-create=false] [-address :6837] [-cert-file /path/to/ssl/certificate] [-key-file /path/to/ssl/key] [-gen-cert-file /path/to/created/cert/file] [-motd "Example message of the day."] [-motd-always-display=false] [-send-origin=true] [-screen-share=false] [-turn-url stun:turn.example.com:3478] [-turn-secret secret] [-turn-secret-file /path/to/turn/secret] [-turn-ttl 3600] [-log-level=0] [-log-file /path/to/log/file] [-admin=false] [-admin-path /admin] [-admin-data-file /data/admin-history.db] [-geoip-api-url https://ipwho.is] [-launch=true]
+$ nvdaRemoteServer [-pid-file /path/to/pid/file] [-conf-file /path/to/configuration/file] [-conf-read=true] [-gen-conf-file /path/to/generated/configuration/file] [-gen-conf-dir=false] [-create=false] [-address :6837] [-ws-address :443] [-ws-path /] [-ws-raw=true] [-cert-file /path/to/ssl/certificate] [-key-file /path/to/ssl/key] [-gen-cert-file /path/to/created/cert/file] [-motd "Example message of the day."] [-motd-always-display=false] [-send-origin=true] [-screen-share=false] [-turn-url stun:turn.example.com:3478] [-turn-secret secret] [-turn-secret-file /path/to/turn/secret] [-turn-ttl 3600] [-log-level=0] [-log-file /path/to/log/file] [-admin=false] [-admin-path /admin] [-admin-data-file /data/admin-history.db] [-geoip-api-url https://ipwho.is] [-launch=true]
 ```
 
 Please note that the brackets around a parameter indicate that it is optional.
@@ -211,6 +213,29 @@ To listen on an IPV4 address, it's as simple as using a valid parameter such as 
 The default port, if no address is declared, is 6837. Valid port numbers are between 1 and 65536. When declaring an address for the server to listen on, you must also declare a port, or the parameter will be invalid. You need not declare an address, however. For example, if you want to listen on all addresses, but use port 5000, use the following.
 
 `:5000`
+
+
+#### `-ws-address`
+
+Address the server will listen on for secure WebSocket (wss) connections, in the same ip:port form as `-address`, such as `:443`. This lets clients connect through corporate HTTP proxies that only allow HTTPS traffic. It can be declared more than once. If it is unset, no WebSocket listener is started.
+
+By default, these addresses also accept the historic newline delimited NVDA Remote protocol, so a single port serves both the older and the newer clients. See `-ws-raw` below.
+
+
+#### `-ws-path`
+
+URL path on which the server accepts WebSocket connections, such as `/` or `/ws`. The default is `/`.
+
+
+#### `-ws-raw`
+
+Also accept the historic newline delimited NVDA Remote protocol on the `-ws-address` addresses. It defaults to true.
+
+Once the TLS handshake is complete, the server looks at the first decrypted byte. The historic protocol is a stream of JSON objects, so it always starts with an opening brace, while a WebSocket client always starts with an HTTP request line. The two are never ambiguous, so both protocols can share the same address and the same certificate.
+
+This is what allows older clients configured on port 443 to keep connecting without being reconfigured. Set this parameter to false to restore the WebSocket only behavior. It has no effect on the `-address` listeners, which always speak the historic protocol.
+
+A full description of the design, the tests and the rollback procedure is available in [TCP-and-WebSocket.md](TCP-and-WebSocket.md).
 
 
 #### `-cert-file`

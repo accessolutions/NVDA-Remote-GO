@@ -4,6 +4,18 @@ dist/
 *.pid
 nvdaRemoteServer.json
 
+# Configuration locale de deploiement. Contient les domaines, chemins et tout
+# element propre a une installation. Ne doit jamais etre versionne.
+.env
+**/.env
+
+# Certificats, cles et secrets, quel que soit l'emplacement.
+*.key
+*.p12
+*.pfx
+turn.secret
+admin.hash
+
 # Throwaway measurement scripts and their output, kept out of the history.
 prototype/
-.tmp-deploy-test.sh
+.tmp-*

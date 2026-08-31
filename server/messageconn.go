@@ -37,9 +37,20 @@ type rawConn struct {
 }
 
 func newRawConn(conn net.Conn, terminator byte) *rawConn {
+	return newRawConnWithReader(conn, nil, terminator)
+}
+
+// newRawConnWithReader builds a rawConn around a buffered reader that may
+// already hold bytes read from the connection, such as the bytes consumed while
+// detecting which protocol the client speaks. Passing the very same reader is
+// mandatory, since recreating one would silently drop those bytes.
+func newRawConnWithReader(conn net.Conn, reader *bufio.Reader, terminator byte) *rawConn {
+	if reader == nil {
+		reader = bufio.NewReader(conn)
+	}
 	return &rawConn{
 		conn:       conn,
-		reader:     bufio.NewReader(conn),
+		reader:     reader,
 		terminator: terminator,
 	}
 }
