@@ -36,6 +36,56 @@ seule pour la clé privée TLS.
   dans le conteneur.
 - Validité **90 jours**, renouvellement automatique via cron utilisateur.
 
+## Partage d'écran : options obligatoires
+
+Le serveur ne relaie la signalisation WebRTC que si `-screen-share` figure dans
+`SERVER_ARGS`, et il ne répond à la demande `turn_credentials` que s'il connaît
+au moins un `-turn-url`. Ces deux valeurs sont désactivées par défaut.
+
+Une configuration incomplète **ne produit aucune erreur au démarrage**. Les deux
+postes négocient la session normalement, puis le navigateur ouvre la connexion
+sans aucun serveur ICE et le lien n'aboutit jamais dès que les postes ne sont pas
+sur le même réseau. Le journal NVDA affiche alors :
+
+```
+Starting screen sharing without any ICE server: the relay did not answer the TURN credentials request
+Screen sharing failed: The connection could not be established
+```
+
+`deploy-letsencrypt.sh` refuse désormais de déployer une configuration
+incohérente : `-screen-share` sans `-turn-url`, une URL `turn:`/`turns:` sans
+`-turn-secret-file`, ou un secret introuvable.
+
+> **Piège.** `renew.sh` se contente d'un `docker restart`, qui conserve les
+> arguments du conteneur, alors que `deploy-letsencrypt.sh` fait `docker rm -f`
+> puis `docker run`. Toute option passée à la main dans un `docker run` est donc
+> perdue au déploiement suivant. Elles doivent toutes vivre dans `.env`.
+
+Exemple de `.env` :
+
+```sh
+SERVER_ARGS=-conf-read=false -ws-address :443 -screen-share \
+  -turn-url stun:nvdaremote.example.com:3478 \
+  -turn-url turns:nvdaremote.example.com:5349 \
+  -turn-secret-file /etc/nvdaremote/turn-secret -turn-ttl 3600
+TURN_SECRET_FILE=/etc/nvdaremote/turn-secret
+```
+
+`TURN_SECRET_FILE` monte le fichier en lecture seule au même chemin dans le
+conteneur, ce qui permet de le désigner tel quel par `-turn-secret-file`. Le
+même secret doit être configuré comme `static-auth-secret` dans coturn.
+
+Vérification sur le serveur :
+
+```sh
+docker inspect --format '{{json .Args}}' nvdaremote
+docker logs nvdaremote | grep -i turn
+```
+
+L'état réel de l'instance de production, les règles à respecter lors d'une mise
+à jour du conteneur et la configuration de coturn sont décrits dans
+[docs/exploitation-production.md](../docs/exploitation-production.md).
+
 ## Comment ça marche
 
 Le port 80 de l'hôte est généralement déjà occupé par un serveur web. On ne peut
@@ -65,7 +115,7 @@ donc pas y lancer un nginx dédié. La validation Let's Encrypt (challenge
 ## Réexécuter / adapter
 
 Ajustez votre fichier `.env` (`DOMAIN`, `ADDITIONAL_DOMAIN`, `EMAIL`, `WEBROOT`,
-`SERVER_ARGS`, `SERVER_PORTS`) puis :
+`SERVER_ARGS`, `SERVER_PORTS`, `TURN_SECRET_FILE`) puis :
 
 ```sh
 ./deploy-letsencrypt.sh

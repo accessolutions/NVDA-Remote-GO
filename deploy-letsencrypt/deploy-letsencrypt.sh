@@ -55,9 +55,16 @@ SERVER_IMAGE="${SERVER_IMAGE:-nvdaremoteserver-docker}"
 # Arguments de lancement du serveur (hors cert/key, ajoutes automatiquement).
 # Ici : WebSocket securise sur 443, qui accepte aussi le protocole historique
 # grace au multiplexage, en plus du TLS historique sur 6837.
+#
+# Le partage d'ecran exige en plus -screen-share et au moins un -turn-url ;
+# check_screen_share() ci-dessous refuse de deployer une configuration
+# incoherente, car elle donnerait un partage d'ecran qui negocie puis echoue.
 SERVER_ARGS="${SERVER_ARGS:--conf-read=false -ws-address :443}"
 # Ports publies par le conteneur (format -p de docker run).
 SERVER_PORTS="${SERVER_PORTS:--p 443:443 -p 6837:6837}"
+# Fichier de l'hote contenant le secret partage avec le serveur TURN. Il est
+# monte en lecture seule au meme chemin dans le conteneur.
+TURN_SECRET_FILE="${TURN_SECRET_FILE:-}"
 
 # Volumes Docker pour certbot.
 VOL_ETC="${VOL_ETC:-le-etc}"          # /etc/letsencrypt (certificats + config)
@@ -74,6 +81,99 @@ log() { echo ">>> $*"; }
 
 require_docker() {
     command -v docker >/dev/null 2>&1 || { echo "ERREUR : Docker absent." >&2; exit 1; }
+}
+
+# --- 0. Coherence des options de partage d'ecran ------------------------------
+# Le serveur ne relaie la signalisation WebRTC que si -screen-share est present,
+# et ne repond a la demande turn_credentials que s'il connait au moins une URL
+# ICE. Une configuration incomplete ne produit aucune erreur au demarrage : la
+# session se negocie normalement puis la connexion video n'aboutit jamais des
+# que les deux postes ne sont pas sur le meme reseau. Le probleme est donc
+# detecte ici, ou il est encore lisible.
+
+# Vrai lorsque SERVER_ARGS active l'option nommee. "-opt=false" ne compte pas.
+server_arg_enabled() {
+    for arg in ${SERVER_ARGS}; do
+        case "${arg}" in
+            "-$1"|"--$1")
+                return 0
+                ;;
+            "-$1="*|"--$1="*)
+                case "${arg#*=}" in
+                    false|0|no) return 1 ;;
+                    *) return 0 ;;
+                esac
+                ;;
+        esac
+    done
+    return 1
+}
+
+# Ecrit une URL ICE par ligne, quelle que soit la forme employee.
+server_turn_urls() {
+    pending=0
+    for arg in ${SERVER_ARGS}; do
+        if [ "${pending}" = "1" ]; then
+            echo "${arg}"
+            pending=0
+            continue
+        fi
+        case "${arg}" in
+            -turn-url|--turn-url) pending=1 ;;
+            -turn-url=*|--turn-url=*) echo "${arg#*=}" ;;
+        esac
+    done
+}
+
+check_screen_share() {
+    if ! server_arg_enabled screen-share; then
+        if [ -n "$(server_turn_urls)" ]; then
+            echo "AVERTISSEMENT : des URL TURN sont configurees mais -screen-share est absent de SERVER_ARGS ; le serveur les ignorera." >&2
+        fi
+        return 0
+    fi
+    urls="$(server_turn_urls)"
+    if [ -z "${urls}" ]; then
+        echo "ERREUR : SERVER_ARGS active -screen-share sans aucun -turn-url." >&2
+        echo "Le serveur ne repondrait pas aux demandes turn_credentials, et le partage d'ecran" >&2
+        echo "echouerait des que les deux postes ne sont pas sur le meme reseau." >&2
+        echo "Ajoutez au moins un -turn-url stun:... ou turns:... dans .env." >&2
+        exit 1
+    fi
+    needs_secret=0
+    for url in ${urls}; do
+        case "${url}" in
+            turn:*|turns:*) needs_secret=1 ;;
+            stun:*|stuns:*) ;;
+            *)
+                echo "ERREUR : l URL ICE ${url} doit commencer par stun:, stuns:, turn: ou turns:." >&2
+                exit 1
+                ;;
+        esac
+    done
+    if [ "${needs_secret}" = "0" ]; then
+        return 0
+    fi
+    if ! server_arg_enabled turn-secret-file; then
+        echo "ERREUR : une URL turn: ou turns: est configuree sans -turn-secret-file." >&2
+        echo "Le serveur ne pourrait pas signer de justificatifs et n annoncerait que le STUN." >&2
+        exit 1
+    fi
+    if [ -z "${TURN_SECRET_FILE}" ]; then
+        echo "ERREUR : renseignez TURN_SECRET_FILE dans .env pour que le secret soit monte dans le conteneur." >&2
+        exit 1
+    fi
+    if [ ! -r "${TURN_SECRET_FILE}" ]; then
+        echo "ERREUR : le fichier de secret TURN ${TURN_SECRET_FILE} est introuvable ou illisible." >&2
+        exit 1
+    fi
+    case " ${SERVER_ARGS} " in
+        *" ${TURN_SECRET_FILE} "*|*"=${TURN_SECRET_FILE} "*) ;;
+        *)
+            echo "ERREUR : -turn-secret-file doit designer ${TURN_SECRET_FILE}, chemin monte dans le conteneur." >&2
+            exit 1
+            ;;
+    esac
 }
 
 # --- 1. Exception ACME dans le webroot (via conteneur, droits du demon) -------
@@ -126,6 +226,10 @@ obtain_cert() {
 # --- 3. (Re)creation du conteneur NVDA Remote avec le cert signe ---------------
 run_server() {
     log "Recreation du conteneur ${SERVER_NAME} avec le certificat signe"
+    secret_mount=""
+    if [ -n "${TURN_SECRET_FILE}" ]; then
+        secret_mount="-v ${TURN_SECRET_FILE}:${TURN_SECRET_FILE}:ro"
+    fi
     docker rm -f "${SERVER_NAME}" >/dev/null 2>&1 || true
     # shellcheck disable=SC2086
     docker run -d \
@@ -133,6 +237,7 @@ run_server() {
         --restart unless-stopped \
         ${SERVER_PORTS} \
         -v "${VOL_ETC}:/etc/letsencrypt:ro" \
+        ${secret_mount} \
         "${SERVER_IMAGE}" \
         /nvdaRemoteServer ${SERVER_ARGS} -cert-file "${CERT}" -key-file "${KEY}"
 }
@@ -147,6 +252,7 @@ install_cron() {
 }
 
 require_docker
+check_screen_share
 prepare_webroot
 obtain_cert
 run_server
