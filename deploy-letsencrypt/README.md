@@ -84,8 +84,30 @@ Test à blanc sans consommer le quota Let's Encrypt : mettez `STAGING=1` dans
 Renouvellement / vérification manuelle :
 
 ```sh
-~/nvdaremote-renew.sh
+NO_DELAY=1 ~/nvdaremote-renew.sh
 ```
+
+> En mode non interactif, certbot patiente un **délai aléatoire pouvant
+> atteindre 8 minutes** avant de tenter le renouvellement, afin de lisser la
+> charge sur Let's Encrypt. Ce n'est pas un blocage. `NO_DELAY=1` supprime ce
+> délai pour les vérifications manuelles, et `DRY_RUN=1` effectue un essai à
+> blanc sans émettre de certificat ni redémarrer le conteneur.
+
+### Points de vigilance
+
+- Le chemin monté comme webroot dans le conteneur certbot doit être **celui
+  enregistré lors de la première émission**, visible dans
+  `/etc/letsencrypt/renewal/<domaine>.conf` (`webroot_path` et `webroot_map`).
+  Si ces chemins diffèrent, certbot cherche à demander interactivement le
+  webroot des domaines non mappés et l'exécution n'aboutit jamais. L'option
+  `--non-interactive`, désormais systématique, transforme ce cas en erreur
+  explicite.
+- Si le port 80 est servi par un conteneur nginx et non par un serveur web de
+  l'hôte, renseignez `VOL_WEB` avec le nom du volume Docker partagé : certbot y
+  écrit le jeton, nginx le sert.
+- `SERVER_NAME`, `VOL_ETC` et `VOL_LIB` doivent correspondre aux noms réels
+  utilisés en production. Des noms erronés produisent un trompeur `No renewals
+  were attempted`, car certbot lit alors un volume vide.
 
 ## Vérifications
 
