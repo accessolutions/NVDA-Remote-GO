@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/tls"
 	"net"
 	"net/http"
 	"strconv"
@@ -31,7 +30,7 @@ func (s *Server) listenWebSocket() error {
 	path := s.wsPath
 	s.Unlock()
 
-	listener, err := tls.Listen("tcp", address, config)
+	listener, err := listenTLS(address, config)
 	if err != nil {
 		return err
 	}

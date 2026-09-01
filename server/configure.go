@@ -50,6 +50,8 @@ var (
 	turnTtl        int
 )
 
+var sniRoutes SNIRouteList
+
 var createDir bool
 
 var Launch bool
@@ -102,6 +104,8 @@ func Configure() error {
 	flag.StringVar(&turnSecret, "turn-secret", DEFAULT_TURN_SECRET, "Shared secret used to derive ephemeral TURN credentials, matching the static-auth-secret of your coturn server. The secret is never sent to clients. Prefer -turn-secret-file, since command line parameters are visible to other users of the machine.")
 	flag.StringVar(&turnSecretFile, "turn-secret-file", DEFAULT_TURN_SECRET_FILE, "Path to a file holding the shared secret used to derive ephemeral TURN credentials. This is preferred over -turn-secret, which exposes the secret in the process list. Leading and trailing whitespace is stripped.")
 	flag.IntVar(&turnTtl, "turn-ttl", DEFAULT_TURN_TTL, "Lifetime in seconds of the ephemeral TURN credentials handed to clients.")
+
+	flag.Var(&sniRoutes, "sni-route", "Forward the TLS connections asking for a given server name to another TCP endpoint, in the format name=host:port, such as \"turn.example.com=127.0.0.1:5349\". The connection is forwarded untouched before the handshake, so the target service presents its own certificate. This lets a TURN server share port 443 with this server, which is often the only port corporate networks allow. Connections asking for any other name, or for no name at all, are served normally. You can declare this parameter more than once.")
 
 	flag.BoolVar(&Launch, "launch", DEFAULT_LAUNCH, "Launch the server.")
 

@@ -73,7 +73,7 @@ func (s *Server) Listen() error {
 	if config == nil {
 		listener, err = net.Listen("tcp", address)
 	} else {
-		listener, err = tls.Listen("tcp", address, config)
+		listener, err = listenTLS(address, config)
 	}
 	if err != nil {
 		return err
