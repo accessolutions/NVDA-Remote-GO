@@ -136,7 +136,7 @@ The included certificate file is a single file that contains an automatically ge
 # Usage
 
 ```console
-$ nvdaRemoteServer [-pid-file /path/to/pid/file] [-conf-file /path/to/configuration/file] [-conf-read=true] [-gen-conf-file /path/to/generated/configuration/file] [-gen-conf-dir=false] [-create=false] [-address :6837] [-ws-address :443] [-ws-path /] [-ws-raw=true] [-cert-file /path/to/ssl/certificate] [-key-file /path/to/ssl/key] [-gen-cert-file /path/to/created/cert/file] [-motd "Example message of the day."] [-motd-always-display=false] [-send-origin=true] [-screen-share=false] [-turn-url stun:turn.example.com:3478] [-turn-secret secret] [-turn-secret-file /path/to/turn/secret] [-turn-ttl 3600] [-log-level=0] [-log-file /path/to/log/file] [-admin=false] [-admin-path /admin] [-admin-data-file /data/admin-history.db] [-geoip-api-url https://ipwho.is] [-launch=true]
+$ nvdaRemoteServer [-pid-file /path/to/pid/file] [-conf-file /path/to/configuration/file] [-conf-read=true] [-gen-conf-file /path/to/generated/configuration/file] [-gen-conf-dir=false] [-create=false] [-address :6837] [-ws-address :443] [-ws-path /] [-ws-raw=true] [-sni-route turn.example.com=127.0.0.1:5349] [-cert-file /path/to/ssl/certificate] [-key-file /path/to/ssl/key] [-gen-cert-file /path/to/created/cert/file] [-motd "Example message of the day."] [-motd-always-display=false] [-send-origin=true] [-screen-share=false] [-turn-url stun:turn.example.com:3478] [-turn-secret secret] [-turn-secret-file /path/to/turn/secret] [-turn-ttl 3600] [-log-level=0] [-log-file /path/to/log/file] [-admin=false] [-admin-path /admin] [-admin-data-file /data/admin-history.db] [-geoip-api-url https://ipwho.is] [-launch=true]
 ```
 
 Please note that the brackets around a parameter indicate that it is optional.
@@ -236,6 +236,29 @@ Once the TLS handshake is complete, the server looks at the first decrypted byte
 This is what allows older clients configured on port 443 to keep connecting without being reconfigured. Set this parameter to false to restore the WebSocket only behavior. It has no effect on the `-address` listeners, which always speak the historic protocol.
 
 A full description of the design, the tests and the rollback procedure is available in [TCP-and-WebSocket.md](TCP-and-WebSocket.md).
+
+
+#### `-sni-route`
+
+Forward the TLS connections asking for a given server name to another TCP endpoint, in the format `name=host:port`, such as `turn.example.com=127.0.0.1:5349`. It can be declared more than once. If it is unset, nothing is routed and the server behaves exactly as before.
+
+Corporate networks routinely allow port 443 and block everything else. The TURN server used by screen sharing then becomes unreachable on its own ports, and screen sharing fails as soon as the two machines are not on the same network, even though signaling works. This parameter lets a TURN server share port 443 with this server.
+
+The server name is read from the ClientHello **before** the TLS handshake takes place, and matching connections are forwarded untouched, so the target service performs its own handshake and presents its own certificate. Connections asking for any other name, **including those that send no name at all**, are served normally: older clients are unaffected.
+
+This is not the same mechanism as `-ws-raw`, which distinguishes protocols *after* the handshake. Both can be used together.
+
+Routing inside the server, rather than putting a TCP proxy in front of it, keeps the real source address of every client, which the administration history and the geolocation depend on.
+
+Example, with coturn listening on 5349 and its own name in the certificate:
+
+```
+-ws-address :443
+-sni-route turn.example.com=127.0.0.1:5349
+-screen-share
+-turn-url turns:turn.example.com:443?transport=tcp
+-turn-secret-file /data/turn.secret
+```
 
 
 #### `-cert-file`
