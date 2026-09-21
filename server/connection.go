@@ -27,15 +27,20 @@ import (
 type Server struct {
 	sync.Mutex
 	sync.WaitGroup
-	address           string // Address to open connection: localhost:9999
-	resolved          string // Address the listener is actually bound to.
-	config            *tls.Config
-	messageTerminator byte
-	websocket         bool
-	wsPath            string
-	rawFallback       bool
-	ctx               context.Context
-	Stop              context.CancelFunc
+	address            string // Address to open connection: localhost:9999
+	resolved           string // Address the listener is actually bound to.
+	config             *tls.Config
+	messageTerminator  byte
+	websocket          bool
+	wsPath             string
+	rawFallback        bool
+	httpRelayEnabled   bool
+	httpRelayPath      string
+	httpRelayV2Enabled bool
+	httpRelayV2Path    string
+	httpRelayManager   *httpRelayManager
+	ctx                context.Context
+	Stop               context.CancelFunc
 }
 
 var (
@@ -151,6 +156,30 @@ func (s *Server) newRawClient(conn net.Conn, reader *bufio.Reader) *Client {
 	return client
 }
 
+func (s *Server) newHTTPClient(conn MessageConn, remoteAddr net.Addr) *Client {
+	msl.Lock()
+	s.Lock()
+	if s.ctx == nil {
+		s.ctx = context.Background()
+	}
+	client := &Client{
+		conn:              conn,
+		ip:                getIPFromAddr(remoteAddr),
+		port:              getPortFromAddr(remoteAddr),
+		protocol:          "https",
+		connectedAt:       time.Now(),
+		s:                 s,
+		messageTerminator: s.messageTerminator,
+		closed:            false,
+	}
+	client.ctx, client.Close = context.WithCancel(s.ctx)
+	s.Add(1)
+	AddClient(client)
+	s.Unlock()
+	msl.Unlock()
+	return client
+}
+
 // Creates new tcp server instance.
 func New(address string) *Server {
 	server := &Server{
@@ -179,6 +208,8 @@ func NewWebSocketServer(address string, config *tls.Config, path string) *Server
 	}
 	server.wsPath = path
 	server.rawFallback = wsRaw
+	server.httpRelayPath = "/remote/http/v1"
+	server.httpRelayManager = newHTTPRelayManager(defaultHTTPRelayConfig())
 	return server
 }
 

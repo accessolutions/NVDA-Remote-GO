@@ -37,8 +37,35 @@ func (s *Server) listenWebSocket() error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(path, s.handleWebSocket)
+	s.Lock()
+	httpRelayEnabled := s.httpRelayEnabled
+	httpRelayPath := s.httpRelayPath
+	httpRelayV2Enabled := s.httpRelayV2Enabled
+	httpRelayV2Path := s.httpRelayV2Path
+	if httpRelayPath == "" {
+		httpRelayPath = "/remote/http/v1"
+	}
+	if httpRelayV2Path == "" {
+		httpRelayV2Path = "/remote/http/v2"
+	}
+	if httpRelayEnabled && s.httpRelayManager == nil {
+		s.httpRelayManager = newHTTPRelayManager(defaultHTTPRelayConfig())
+	}
+	s.Unlock()
+	if httpRelayEnabled {
+		registerHTTPRelayRoutes(mux, s, httpRelayPath)
+		if httpRelayV2Enabled {
+			registerHTTPRelayV2Routes(mux, s, httpRelayV2Path)
+		}
+		s.httpRelayManager.start()
+	}
 	registerAdminRoutes(mux)
-	httpServer := &http.Server{Handler: mux}
+	httpServer := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       90 * time.Second,
+		MaxHeaderBytes:    64 * 1024,
+	}
 
 	s.Lock()
 	s.resolved = listener.Addr().String()
@@ -65,6 +92,9 @@ func (s *Server) listenWebSocket() error {
 			Log(LOG_DEBUG, "The WebSocket server at "+address+" has received a signal to stop.")
 		}
 		msl.Unlock()
+		if s.httpRelayManager != nil {
+			s.httpRelayManager.closeAll()
+		}
 		_ = httpServer.Close()
 		serveListener.Close()
 		s.Done()

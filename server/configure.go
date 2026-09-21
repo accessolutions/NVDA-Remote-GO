@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"time"
 )
 
 var confFile string
@@ -24,6 +26,21 @@ var (
 	wsAddresses AddressList
 	wsPath      string
 	wsRaw       bool = DEFAULT_WS_RAW
+)
+
+var (
+	httpRelayEnabled     bool = DEFAULT_HTTP_RELAY_ENABLED
+	httpRelayPath        string
+	httpRelayV2Enabled   bool = DEFAULT_HTTP_V2_ENABLED
+	httpRelayV2Path      string
+	httpPollWait         int = DEFAULT_HTTP_POLL_WAIT
+	httpSessionTTL       int = DEFAULT_HTTP_SESSION_TTL
+	httpStreamKeepalive  int = DEFAULT_HTTP_STREAM_KEEPALIVE
+	httpMaxSessions      int = DEFAULT_HTTP_MAX_SESSIONS
+	httpMaxSessionsPerIP int = DEFAULT_HTTP_MAX_SESSIONS_PER_IP
+	httpMaxMessageBytes  int = DEFAULT_HTTP_MAX_MESSAGE_BYTES
+	httpMaxBatchMessages int = DEFAULT_HTTP_MAX_BATCH_MESSAGES
+	httpMaxPendingBytes  int = DEFAULT_HTTP_MAX_PENDING_BYTES
 )
 
 var cert string
@@ -87,9 +104,21 @@ func Configure() error {
 
 	flag.Var(&addresses, "address", "Address the server will listen on in the format ip:port, such as \"0.0.0.0:6837\", \":6837\", \"[::]:6837\". The port must be between 1 and 65536. You can declare this parameter more than once for multiple listen addresses.")
 
-	flag.Var(&wsAddresses, "ws-address", "Address the server will listen on for secure WebSocket (wss) connections, in the format ip:port, such as \":443\". This lets clients connect through corporate HTTP proxies. The port must be between 1 and 65536. You can declare this parameter more than once. If unset, no WebSocket listener is started.")
+	flag.Var(&wsAddresses, "ws-address", "Address the server will listen on for secure WebSocket (wss) connections and optional HTTPS relay services, in the format ip:port, such as \":443\". This lets clients connect through corporate HTTP proxies. The port must be between 1 and 65536. You can declare this parameter more than once. If unset, no WebSocket or HTTPS relay listener is started.")
 	flag.StringVar(&wsPath, "ws-path", DEFAULT_WS_PATH, "URL path on which the server accepts WebSocket connections, such as \"/\" or \"/ws\".")
 	flag.BoolVar(&wsRaw, "ws-raw", DEFAULT_WS_RAW, "Also accept the historic newline delimited NVDA Remote protocol on the WebSocket addresses, by detecting which protocol a client speaks once the TLS handshake is complete. This lets older clients keep connecting to port 443. Set it to false to restore the WebSocket only behavior.")
+	flag.BoolVar(&httpRelayEnabled, "http-relay", DEFAULT_HTTP_RELAY_ENABLED, "Enable the classic HTTPS long-polling relay on the WebSocket HTTPS listeners.")
+	flag.StringVar(&httpRelayPath, "http-path", DEFAULT_HTTP_PATH, "URL path prefix for the classic HTTPS relay, such as \"/remote/http/v1\".")
+	flag.BoolVar(&httpRelayV2Enabled, "http-v2", DEFAULT_HTTP_V2_ENABLED, "Enable the streaming HTTPS relay (v2) in addition to the long-polling relay (v1).")
+	flag.StringVar(&httpRelayV2Path, "http-v2-path", DEFAULT_HTTP_V2_PATH, "URL path prefix for the streaming HTTPS relay, such as \"/remote/http/v2\".")
+	flag.IntVar(&httpPollWait, "http-poll-wait", DEFAULT_HTTP_POLL_WAIT, "Maximum long-poll wait in seconds for the classic HTTPS relay.")
+	flag.IntVar(&httpSessionTTL, "http-session-ttl", DEFAULT_HTTP_SESSION_TTL, "Inactive HTTPS relay session lifetime in seconds.")
+	flag.IntVar(&httpStreamKeepalive, "http-stream-keepalive", DEFAULT_HTTP_STREAM_KEEPALIVE, "Seconds between stream keepalive comments.")
+	flag.IntVar(&httpMaxSessions, "http-max-sessions", DEFAULT_HTTP_MAX_SESSIONS, "Maximum simultaneous classic HTTPS relay sessions.")
+	flag.IntVar(&httpMaxSessionsPerIP, "http-max-sessions-per-ip", DEFAULT_HTTP_MAX_SESSIONS_PER_IP, "Maximum simultaneous classic HTTPS relay sessions from one IP address.")
+	flag.IntVar(&httpMaxMessageBytes, "http-max-message-bytes", DEFAULT_HTTP_MAX_MESSAGE_BYTES, "Maximum size of one classic HTTPS relay message in bytes.")
+	flag.IntVar(&httpMaxBatchMessages, "http-max-batch-messages", DEFAULT_HTTP_MAX_BATCH_MESSAGES, "Maximum messages in one classic HTTPS relay request or response.")
+	flag.IntVar(&httpMaxPendingBytes, "http-max-pending-bytes", DEFAULT_HTTP_MAX_PENDING_BYTES, "Maximum unacknowledged outbound bytes per classic HTTPS relay session.")
 
 	flag.IntVar(&loglevel, "log-level", DEFAULT_LOG_LEVEL, "Choose what log level you wish to use. Any value below -1 will be ignored.")
 	flag.StringVar(&logfile, "log-file", DEFAULT_LOG_FILE, "Choose what log file you wish to use in addition to logging output to the console. If the file can't be created or open for writing, the program will fall back to console logging only.")
@@ -120,6 +149,15 @@ func Configure() error {
 	if len(addresses) == 0 {
 		addresses = make(AddressList, 1)
 		addresses[0] = DEFAULT_ADDRESS
+	}
+	if httpRelayPath == "" {
+		httpRelayPath = DEFAULT_HTTP_PATH
+	}
+	if httpRelayV2Path == "" {
+		httpRelayV2Path = DEFAULT_HTTP_V2_PATH
+	}
+	if err := validateHTTPRelayConfiguration(httpRelayEnabled, httpRelayPath, httpRelayV2Enabled, httpRelayV2Path, adminPath, len(wsAddresses), httpRelayConfigFromFlags()); err != nil {
+		return err
 	}
 
 	if AdminEnabled() && len(wsAddresses) == 0 {
@@ -270,7 +308,13 @@ func Configure() error {
 		Log(LOG_INFO, "Warning: the -ws-raw parameter is set but no WebSocket listener (-ws-address) is configured, so it will be ignored.")
 	}
 	for _, addr := range wsAddresses {
-		Servers = append(Servers, NewWebSocketServer(addr, config, wsPath))
+		server := NewWebSocketServer(addr, config, wsPath)
+		server.httpRelayEnabled = httpRelayEnabled
+		server.httpRelayPath = normalizeHTTPRelayPath(httpRelayPath)
+		server.httpRelayV2Enabled = httpRelayV2Enabled
+		server.httpRelayV2Path = normalizeHTTPRelayPath(httpRelayV2Path)
+		server.httpRelayManager = newHTTPRelayManager(httpRelayConfigFromFlags())
+		Servers = append(Servers, server)
 		logstr := "Starting WebSocket server listening on address " + addr + " at path " + wsPath
 		if wsRaw {
 			logstr += ", also accepting the historic NVDA Remote protocol on the same address"
@@ -312,4 +356,56 @@ func Launch_fail() {
 
 func gen_conf_check() bool {
 	return (!default_gen_conf_file(genConfFile) || !default_gen_conf_dir(genConfDir))
+}
+
+func httpRelayConfigFromFlags() httpRelayConfig {
+	return httpRelayConfig{
+		pollWait:         time.Duration(httpPollWait) * time.Second,
+		sessionTTL:       time.Duration(httpSessionTTL) * time.Second,
+		maxSessions:      httpMaxSessions,
+		maxSessionsPerIP: httpMaxSessionsPerIP,
+		maxMessageBytes:  httpMaxMessageBytes,
+		maxBatchMessages: httpMaxBatchMessages,
+		maxPendingBytes:  httpMaxPendingBytes,
+		streamKeepalive:  time.Duration(httpStreamKeepalive) * time.Second,
+	}
+}
+
+func validateHTTPRelayConfiguration(enabled bool, path string, v2Enabled bool, v2Path, administrationPath string, websocketAddressCount int, config httpRelayConfig) error {
+	if !strings.HasPrefix(path, "/") {
+		return errors.New("-http-path must start with '/'")
+	}
+	if strings.ContainsAny(path, "?#") {
+		return errors.New("-http-path must not contain a query or fragment")
+	}
+	if !strings.HasPrefix(v2Path, "/") {
+		return errors.New("-http-v2-path must start with '/'")
+	}
+	if strings.ContainsAny(v2Path, "?#") {
+		return errors.New("-http-v2-path must not contain a query or fragment")
+	}
+	normalizedPath := normalizeHTTPRelayPath(path)
+	if normalizedPath == normalizeHTTPRelayPath(administrationPath) {
+		return errors.New("-http-path must differ from -admin-path")
+	}
+	normalizedV2 := normalizeHTTPRelayPath(v2Path)
+	if normalizedV2 == normalizedPath {
+		return errors.New("-http-v2-path must differ from -http-path")
+	}
+	if normalizedV2 == normalizeHTTPRelayPath(administrationPath) {
+		return errors.New("-http-v2-path must differ from -admin-path")
+	}
+	if v2Enabled && !enabled {
+		return errors.New("-http-v2 requires -http-relay")
+	}
+	if config.pollWait <= 0 || config.sessionTTL <= 0 || config.pollWait >= config.sessionTTL {
+		return errors.New("HTTP relay poll wait and session TTL must be positive, with poll wait below session TTL")
+	}
+	if config.maxSessions <= 0 || config.maxSessionsPerIP <= 0 || config.maxMessageBytes <= 0 || config.maxBatchMessages <= 0 || config.maxPendingBytes <= 0 {
+		return errors.New("HTTP relay limits must be strictly positive")
+	}
+	if enabled && websocketAddressCount == 0 {
+		return errors.New("-http-relay requires at least one -ws-address")
+	}
+	return nil
 }

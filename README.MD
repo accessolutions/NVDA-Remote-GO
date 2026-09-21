@@ -136,7 +136,7 @@ The included certificate file is a single file that contains an automatically ge
 # Usage
 
 ```console
-$ nvdaRemoteServer [-pid-file /path/to/pid/file] [-conf-file /path/to/configuration/file] [-conf-read=true] [-gen-conf-file /path/to/generated/configuration/file] [-gen-conf-dir=false] [-create=false] [-address :6837] [-ws-address :443] [-ws-path /] [-ws-raw=true] [-sni-route turn.example.com=127.0.0.1:5349] [-cert-file /path/to/ssl/certificate] [-key-file /path/to/ssl/key] [-gen-cert-file /path/to/created/cert/file] [-motd "Example message of the day."] [-motd-always-display=false] [-send-origin=true] [-screen-share=false] [-turn-url stun:turn.example.com:3478] [-turn-secret secret] [-turn-secret-file /path/to/turn/secret] [-turn-ttl 3600] [-log-level=0] [-log-file /path/to/log/file] [-admin=false] [-admin-path /admin] [-admin-data-file /data/admin-history.db] [-geoip-api-url https://ipwho.is] [-launch=true]
+$ nvdaRemoteServer [-pid-file /path/to/pid/file] [-conf-file /path/to/configuration/file] [-conf-read=true] [-gen-conf-file /path/to/generated/configuration/file] [-gen-conf-dir=false] [-create=false] [-address :6837] [-ws-address :443] [-ws-path /] [-ws-raw=true] [-http-relay=false] [-http-path /remote/http/v1] [-http-v2=false] [-http-v2-path /remote/http/v2] [-http-stream-keepalive 15] [-http-poll-wait 25] [-http-session-ttl 120] [-http-max-sessions 1000] [-http-max-sessions-per-ip 20] [-http-max-message-bytes 1048576] [-http-max-batch-messages 32] [-http-max-pending-bytes 4194304] [-sni-route turn.example.com=127.0.0.1:5349] [-cert-file /path/to/ssl/certificate] [-key-file /path/to/ssl/key] [-gen-cert-file /path/to/created/cert/file] [-motd "Example message of the day."] [-motd-always-display=false] [-send-origin=true] [-screen-share=false] [-turn-url stun:turn.example.com:3478] [-turn-secret secret] [-turn-secret-file /path/to/turn/secret] [-turn-ttl 3600] [-log-level=0] [-log-file /path/to/log/file] [-admin=false] [-admin-path /admin] [-admin-data-file /data/admin-history.db] [-geoip-api-url https://ipwho.is] [-launch=true]
 ```
 
 Please note that the brackets around a parameter indicate that it is optional.
@@ -236,6 +236,44 @@ Once the TLS handshake is complete, the server looks at the first decrypted byte
 This is what allows older clients configured on port 443 to keep connecting without being reconfigured. Set this parameter to false to restore the WebSocket only behavior. It has no effect on the `-address` listeners, which always speak the historic protocol.
 
 A full description of the design, the tests and the rollback procedure is available in [TCP-and-WebSocket.md](TCP-and-WebSocket.md).
+
+
+#### `-http-relay`, `-http-path`, `-http-v2`, `-http-v2-path`, `-http-stream-keepalive` and HTTPS relay limits
+
+The classic HTTPS relay is disabled by default. Set `-http-relay=true` to
+enable it on every `-ws-address` listener. It requires at least one WebSocket
+HTTPS listener and uses the same certificate and TLS endpoint; it does not
+open another port.
+
+The default API path is `/remote/http/v1`. The API uses ordinary HTTP/1.1
+requests and long polling, not a WebSocket upgrade. `-http-path` changes the
+path prefix and must not be the same as `-admin-path` or the WebSocket path.
+
+The v2 streaming API is disabled by default. Set `-http-v2=true` in addition
+to `-http-relay=true` to expose a server-sent events stream at
+`/remote/http/v2`. The v2 route uses the same TLS listener, session
+authentication and limits as v1. `-http-v2-path` changes its path prefix and
+must differ from the v1, admin and WebSocket paths. The
+`-http-stream-keepalive` value is the interval, in seconds, between keepalive
+comments sent on an otherwise idle stream.
+
+The remaining flags bound the long-poll wait, session lifetime, total and
+per-address session counts, message size, batch size and pending outbound
+data. Their defaults are suitable for an initial deployment and should be
+adjusted only after testing file transfer and audio workloads:
+
+```console
+$ nvdaRemoteServer -conf-read=false -cert-file /path/fullchain.pem \
+	-key-file /path/privkey.pem -ws-address :443 -ws-path / \
+	-http-relay=true -http-path /remote/http/v1 \
+	-http-v2=true -http-v2-path /remote/http/v2 \
+	-http-stream-keepalive 15
+```
+
+Keep `-http-relay=false` during a normal server upgrade. Validate the API on a
+pre-production listener first, then enable it explicitly and monitor the
+session, stream and poll counters before offering it to users. Leaving
+`-http-v2=false` keeps existing clients on v1 without changing the v1 API.
 
 
 #### `-sni-route`
