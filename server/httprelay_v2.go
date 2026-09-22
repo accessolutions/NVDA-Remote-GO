@@ -187,6 +187,13 @@ func (s *Server) handleHTTPSessionStream(w http.ResponseWriter, r *http.Request,
 		}
 		if len(messages) > 0 {
 			flusher.Flush()
+			// A flushed event has left the server, so the backlog up to that
+			// sequence can be released without waiting for the client, which
+			// only acknowledges every few seconds. Without this the backlog
+			// would keep growing until enqueueOutbound rejects a write and the
+			// relay tears the session down. The sequence always comes from a
+			// queued message, so the acknowledgement cannot be ahead.
+			_ = session.acknowledgeOutbound(after)
 			session.touch()
 			continue
 		}

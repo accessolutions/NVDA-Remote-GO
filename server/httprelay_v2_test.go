@@ -154,6 +154,84 @@ func postHTTPRelayV2Acknowledgement(t *testing.T, testServer *httptest.Server, s
 	return response
 }
 
+// findHTTPRelayClient returns the relay Client attached to the HTTP session, so
+// that a test can push messages through the very same path a peer would use.
+func findHTTPRelayClient(t *testing.T) *Client {
+	t.Helper()
+	list, _ := snapshotClients()
+	for _, c := range list {
+		if c.GetProtocol() == "https" {
+			return c
+		}
+	}
+	t.Fatal("no https client was registered for the relay session")
+	return nil
+}
+
+// TestHTTPRelayV2StreamSurvivesUnacknowledgedBurst covers a controlling machine
+// that only listens: it receives far more messages than the backlog holds and
+// never acknowledges, because the transport only does so every few seconds. The
+// stream has to pace the sender instead of letting the relay close the session.
+func TestHTTPRelayV2StreamSurvivesUnacknowledgedBurst(t *testing.T) {
+	_, testServer := startHTTPRelayV2TestServer(t)
+	sessionID, token, _ := createHTTPRelayV2Session(t, testServer)
+	response, reader := openHTTPRelayV2Stream(t, testServer, sessionID, token, 0)
+	defer response.Body.Close()
+	readHTTPRelayV2Ready(t, reader)
+	client := findHTTPRelayClient(t)
+
+	const burst = 600
+	go func() {
+		for i := 0; i < burst; i++ {
+			client.Send([]byte(`{"type":"speak","sequence":[{"text":"hello"}]}`))
+		}
+	}()
+	for i := 0; i < burst; i++ {
+		if _, err := readHTTPRelayV2BlockWithTimeout(reader, 5*time.Second); err != nil {
+			t.Fatalf("message %d of %d was not delivered: %v", i+1, burst, err)
+		}
+	}
+	if client.ctx.Err() != nil {
+		t.Fatal("the relay closed the session during the burst")
+	}
+}
+
+// TestHTTPRelayV2StreamReleasesBacklogOnFlush proves the writer frees the
+// backlog itself, so a session that never hears from its client still drains.
+func TestHTTPRelayV2StreamReleasesBacklogOnFlush(t *testing.T) {
+	s, testServer := startHTTPRelayV2TestServer(t)
+	sessionID, token, _ := createHTTPRelayV2Session(t, testServer)
+	response, reader := openHTTPRelayV2Stream(t, testServer, sessionID, token, 0)
+	defer response.Body.Close()
+	readHTTPRelayV2Ready(t, reader)
+	session := s.httpRelay().get(sessionID)
+	if session == nil {
+		t.Fatal("created v2 session was not found")
+	}
+	for i := 0; i < 3; i++ {
+		if err := session.enqueueOutbound([]byte(`{"type":"ping"}`)); err != nil {
+			t.Fatalf("queueing message %d failed: %v", i+1, err)
+		}
+		if _, err := readHTTPRelayV2BlockWithTimeout(reader, time.Second); err != nil {
+			t.Fatalf("reading message %d failed: %v", i+1, err)
+		}
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		session.mu.Lock()
+		acknowledged := session.acknowledgedOutbound
+		backlog := len(session.outbound)
+		session.mu.Unlock()
+		if acknowledged == 3 && backlog == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the flushed backlog was not released: acknowledged=%d backlog=%d", acknowledged, backlog)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestHTTPRelayV2CreateSessionReturnsKeepalive(t *testing.T) {
 	_, testServer := startHTTPRelayV2TestServer(t)
 	_, _, payload := createHTTPRelayV2Session(t, testServer)

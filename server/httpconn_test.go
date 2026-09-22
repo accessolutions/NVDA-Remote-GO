@@ -164,6 +164,59 @@ func TestHTTPConnRejectsPendingLimitAndHonorsWriteDeadline(t *testing.T) {
 	}
 }
 
+func newLimitedBacklogSession(t *testing.T, backlog int) *httpSession {
+	t.Helper()
+	config := defaultHTTPRelayConfig()
+	config.maxOutboundBacklog = backlog
+	manager := newHTTPRelayManager(config)
+	return newHTTPSession("backlog-session", [32]byte{}, httpTestAddr("127.0.0.1:1234"), manager)
+}
+
+func TestHTTPConnWriteMessageWaitsForBacklogRoom(t *testing.T) {
+	session := newLimitedBacklogSession(t, 2)
+	conn := newHTTPConn(session)
+	if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatalf("setting write deadline failed: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := conn.WriteMessage([]byte("queued")); err != nil {
+			t.Fatalf("filling the backlog failed: %v", err)
+		}
+	}
+	result := make(chan error, 1)
+	go func() { result <- conn.WriteMessage([]byte("waiting")) }()
+	select {
+	case err := <-result:
+		t.Fatalf("the write returned %v instead of waiting for room", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := session.acknowledgeOutbound(1); err != nil {
+		t.Fatalf("acknowledging the first message failed: %v", err)
+	}
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("the write failed once room was released: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the write stayed blocked after room was released")
+	}
+}
+
+func TestHTTPConnWriteMessageGivesUpAtTheWriteDeadline(t *testing.T) {
+	session := newLimitedBacklogSession(t, 1)
+	conn := newHTTPConn(session)
+	if err := conn.SetWriteDeadline(time.Now().Add(150 * time.Millisecond)); err != nil {
+		t.Fatalf("setting write deadline failed: %v", err)
+	}
+	if err := conn.WriteMessage([]byte("queued")); err != nil {
+		t.Fatalf("filling the backlog failed: %v", err)
+	}
+	if err := conn.WriteMessage([]byte("late")); !errors.Is(err, errHTTPWriteDeadline) {
+		t.Fatalf("expected the write deadline to bound the wait, got %v", err)
+	}
+}
+
 func TestHTTPConnCloseIsIdempotentAndKeepsRemoteAddress(t *testing.T) {
 	session, manager := newTestHTTPSession()
 	manager.mu.Lock()

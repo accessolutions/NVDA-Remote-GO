@@ -29,18 +29,19 @@ var (
 )
 
 var (
-	httpRelayEnabled     bool = DEFAULT_HTTP_RELAY_ENABLED
-	httpRelayPath        string
-	httpRelayV2Enabled   bool = DEFAULT_HTTP_V2_ENABLED
-	httpRelayV2Path      string
-	httpPollWait         int = DEFAULT_HTTP_POLL_WAIT
-	httpSessionTTL       int = DEFAULT_HTTP_SESSION_TTL
-	httpStreamKeepalive  int = DEFAULT_HTTP_STREAM_KEEPALIVE
-	httpMaxSessions      int = DEFAULT_HTTP_MAX_SESSIONS
-	httpMaxSessionsPerIP int = DEFAULT_HTTP_MAX_SESSIONS_PER_IP
-	httpMaxMessageBytes  int = DEFAULT_HTTP_MAX_MESSAGE_BYTES
-	httpMaxBatchMessages int = DEFAULT_HTTP_MAX_BATCH_MESSAGES
-	httpMaxPendingBytes  int = DEFAULT_HTTP_MAX_PENDING_BYTES
+	httpRelayEnabled       bool = DEFAULT_HTTP_RELAY_ENABLED
+	httpRelayPath          string
+	httpRelayV2Enabled     bool = DEFAULT_HTTP_V2_ENABLED
+	httpRelayV2Path        string
+	httpPollWait           int = DEFAULT_HTTP_POLL_WAIT
+	httpSessionTTL         int = DEFAULT_HTTP_SESSION_TTL
+	httpStreamKeepalive    int = DEFAULT_HTTP_STREAM_KEEPALIVE
+	httpMaxSessions        int = DEFAULT_HTTP_MAX_SESSIONS
+	httpMaxSessionsPerIP   int = DEFAULT_HTTP_MAX_SESSIONS_PER_IP
+	httpMaxMessageBytes    int = DEFAULT_HTTP_MAX_MESSAGE_BYTES
+	httpMaxBatchMessages   int = DEFAULT_HTTP_MAX_BATCH_MESSAGES
+	httpMaxOutboundBacklog int = DEFAULT_HTTP_MAX_OUTBOUND_BACKLOG
+	httpMaxPendingBytes    int = DEFAULT_HTTP_MAX_PENDING_BYTES
 )
 
 var cert string
@@ -118,6 +119,7 @@ func Configure() error {
 	flag.IntVar(&httpMaxSessionsPerIP, "http-max-sessions-per-ip", DEFAULT_HTTP_MAX_SESSIONS_PER_IP, "Maximum simultaneous classic HTTPS relay sessions from one IP address.")
 	flag.IntVar(&httpMaxMessageBytes, "http-max-message-bytes", DEFAULT_HTTP_MAX_MESSAGE_BYTES, "Maximum size of one classic HTTPS relay message in bytes.")
 	flag.IntVar(&httpMaxBatchMessages, "http-max-batch-messages", DEFAULT_HTTP_MAX_BATCH_MESSAGES, "Maximum messages in one classic HTTPS relay request or response.")
+	flag.IntVar(&httpMaxOutboundBacklog, "http-max-outbound-backlog", DEFAULT_HTTP_MAX_OUTBOUND_BACKLOG, "Maximum unacknowledged outbound messages retained per HTTPS relay session.")
 	flag.IntVar(&httpMaxPendingBytes, "http-max-pending-bytes", DEFAULT_HTTP_MAX_PENDING_BYTES, "Maximum unacknowledged outbound bytes per classic HTTPS relay session.")
 
 	flag.IntVar(&loglevel, "log-level", DEFAULT_LOG_LEVEL, "Choose what log level you wish to use. Any value below -1 will be ignored.")
@@ -360,14 +362,15 @@ func gen_conf_check() bool {
 
 func httpRelayConfigFromFlags() httpRelayConfig {
 	return httpRelayConfig{
-		pollWait:         time.Duration(httpPollWait) * time.Second,
-		sessionTTL:       time.Duration(httpSessionTTL) * time.Second,
-		maxSessions:      httpMaxSessions,
-		maxSessionsPerIP: httpMaxSessionsPerIP,
-		maxMessageBytes:  httpMaxMessageBytes,
-		maxBatchMessages: httpMaxBatchMessages,
-		maxPendingBytes:  httpMaxPendingBytes,
-		streamKeepalive:  time.Duration(httpStreamKeepalive) * time.Second,
+		pollWait:           time.Duration(httpPollWait) * time.Second,
+		sessionTTL:         time.Duration(httpSessionTTL) * time.Second,
+		maxSessions:        httpMaxSessions,
+		maxSessionsPerIP:   httpMaxSessionsPerIP,
+		maxMessageBytes:    httpMaxMessageBytes,
+		maxBatchMessages:   httpMaxBatchMessages,
+		maxOutboundBacklog: httpMaxOutboundBacklog,
+		maxPendingBytes:    httpMaxPendingBytes,
+		streamKeepalive:    time.Duration(httpStreamKeepalive) * time.Second,
 	}
 }
 
@@ -401,8 +404,11 @@ func validateHTTPRelayConfiguration(enabled bool, path string, v2Enabled bool, v
 	if config.pollWait <= 0 || config.sessionTTL <= 0 || config.pollWait >= config.sessionTTL {
 		return errors.New("HTTP relay poll wait and session TTL must be positive, with poll wait below session TTL")
 	}
-	if config.maxSessions <= 0 || config.maxSessionsPerIP <= 0 || config.maxMessageBytes <= 0 || config.maxBatchMessages <= 0 || config.maxPendingBytes <= 0 {
+	if config.maxSessions <= 0 || config.maxSessionsPerIP <= 0 || config.maxMessageBytes <= 0 || config.maxBatchMessages <= 0 || config.maxOutboundBacklog <= 0 || config.maxPendingBytes <= 0 {
 		return errors.New("HTTP relay limits must be strictly positive")
+	}
+	if config.maxOutboundBacklog < config.maxBatchMessages {
+		return errors.New("-http-max-outbound-backlog must be at least -http-max-batch-messages")
 	}
 	if enabled && websocketAddressCount == 0 {
 		return errors.New("-http-relay requires at least one -ws-address")

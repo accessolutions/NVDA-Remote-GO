@@ -312,10 +312,13 @@ func (s *Server) handleHTTPSessionPoll(w http.ResponseWriter, r *http.Request, s
 		return
 	}
 	if err := session.acknowledgeOutbound(after); err != nil {
+		session.mu.Lock()
+		expectedSequence := session.nextOutboundSequence
+		session.mu.Unlock()
 		writeHTTPRelayJSON(w, http.StatusConflict, map[string]interface{}{
 			"error":            "invalid_after",
 			"message":          "The after sequence is ahead of the server",
-			"expectedSequence": session.nextOutboundSequence,
+			"expectedSequence": expectedSequence,
 		})
 		return
 	}

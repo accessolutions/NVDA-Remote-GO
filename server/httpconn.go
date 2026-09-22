@@ -29,21 +29,37 @@ type httpRelayConfig struct {
 	maxSessionsPerIP int
 	maxMessageBytes  int
 	maxBatchMessages int
-	maxPendingBytes  int
-	streamKeepalive  time.Duration
+	// maxOutboundBacklog bounds how many messages may await acknowledgement.
+	// It is deliberately much larger than maxBatchMessages: a batch bounds one
+	// HTTP response, whereas the backlog has to absorb everything a peer sends
+	// between two client acknowledgements, which the streaming transport only
+	// issues every few seconds.
+	maxOutboundBacklog int
+	maxPendingBytes    int
+	streamKeepalive    time.Duration
 }
 
 func defaultHTTPRelayConfig() httpRelayConfig {
 	return httpRelayConfig{
-		pollWait:         25 * time.Second,
-		sessionTTL:       120 * time.Second,
-		maxSessions:      1000,
-		maxSessionsPerIP: 20,
-		maxMessageBytes:  1 << 20,
-		maxBatchMessages: 32,
-		maxPendingBytes:  4 << 20,
-		streamKeepalive:  15 * time.Second,
+		pollWait:           25 * time.Second,
+		sessionTTL:         120 * time.Second,
+		maxSessions:        1000,
+		maxSessionsPerIP:   20,
+		maxMessageBytes:    1 << 20,
+		maxBatchMessages:   32,
+		maxOutboundBacklog: 256,
+		maxPendingBytes:    4 << 20,
+		streamKeepalive:    15 * time.Second,
 	}
+}
+
+// outboundBacklogLimit tolerates a configuration that predates
+// maxOutboundBacklog, such as a zero value built by a test helper.
+func (c httpRelayConfig) outboundBacklogLimit() int {
+	if c.maxOutboundBacklog > 0 {
+		return c.maxOutboundBacklog
+	}
+	return c.maxBatchMessages
 }
 
 type sequencedMessage struct {
@@ -222,9 +238,12 @@ type httpSession struct {
 	lastActivity         time.Time
 	writeDeadline        time.Time
 	notify               chan struct{}
-	closed               bool
-	closeOnce            sync.Once
-	manager              *httpRelayManager
+	// drained is closed and replaced whenever the backlog shrinks, so that
+	// writers waiting for room are all released at once.
+	drained   chan struct{}
+	closed    bool
+	closeOnce sync.Once
+	manager   *httpRelayManager
 }
 
 func newHTTPSession(id string, tokenHash [32]byte, remoteAddr net.Addr, manager *httpRelayManager) *httpSession {
@@ -242,6 +261,7 @@ func newHTTPSession(id string, tokenHash [32]byte, remoteAddr net.Addr, manager 
 		inbound:      make(chan []byte, config.maxBatchMessages),
 		lastActivity: time.Now(),
 		notify:       make(chan struct{}, 1),
+		drained:      make(chan struct{}),
 		manager:      manager,
 	}
 }
@@ -289,32 +309,60 @@ func (s *httpSession) acceptInbound(sequence uint64, payload []byte) error {
 	return nil
 }
 
+// enqueueOutbound appends a message to the backlog the reader drains. When the
+// backlog is full it waits for room until the write deadline expires, the way a
+// socket write blocks on a full send buffer. Failing immediately instead would
+// make the relay close the session on any burst, because client.listen treats
+// every write error as fatal.
 func (s *httpSession) enqueueOutbound(payload []byte) error {
 	config := s.config()
+	backlogLimit := config.outboundBacklogLimit()
 	payloadCopy := append([]byte(nil), payload...)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return errHTTPConnClosed
+	for {
+		s.mu.Lock()
+		if s.closed {
+			s.mu.Unlock()
+			return errHTTPConnClosed
+		}
+		deadline := s.writeDeadline
+		if !deadline.IsZero() && !time.Now().Before(deadline) {
+			s.mu.Unlock()
+			return errHTTPWriteDeadline
+		}
+		if len(s.outbound) < backlogLimit && s.pendingOutboundBytes+len(payloadCopy) <= config.maxPendingBytes {
+			s.nextOutboundSequence++
+			s.outbound = append(s.outbound, sequencedMessage{
+				sequence: s.nextOutboundSequence,
+				payload:  payloadCopy,
+			})
+			s.pendingOutboundBytes += len(payloadCopy)
+			s.lastActivity = time.Now()
+			select {
+			case s.notify <- struct{}{}:
+			default:
+			}
+			s.mu.Unlock()
+			return nil
+		}
+		if deadline.IsZero() {
+			// No deadline to bound the wait, so the caller keeps the historic
+			// immediate rejection rather than blocking forever.
+			s.mu.Unlock()
+			return errHTTPPendingLimit
+		}
+		drained := s.drained
+		s.mu.Unlock()
+		timer := time.NewTimer(time.Until(deadline))
+		select {
+		case <-drained:
+			timer.Stop()
+		case <-timer.C:
+			return errHTTPWriteDeadline
+		case <-s.ctx.Done():
+			timer.Stop()
+			return errHTTPConnClosed
+		}
 	}
-	if !s.writeDeadline.IsZero() && time.Now().After(s.writeDeadline) {
-		return errHTTPWriteDeadline
-	}
-	if len(s.outbound) >= config.maxBatchMessages || s.pendingOutboundBytes+len(payloadCopy) > config.maxPendingBytes {
-		return errHTTPPendingLimit
-	}
-	s.nextOutboundSequence++
-	s.outbound = append(s.outbound, sequencedMessage{
-		sequence: s.nextOutboundSequence,
-		payload:  payloadCopy,
-	})
-	s.pendingOutboundBytes += len(payloadCopy)
-	s.lastActivity = time.Now()
-	select {
-	case s.notify <- struct{}{}:
-	default:
-	}
-	return nil
 }
 
 func (s *httpSession) acknowledgeOutbound(sequence uint64) error {
@@ -333,6 +381,9 @@ func (s *httpSession) acknowledgeOutbound(sequence uint64) error {
 	}
 	if remove > 0 {
 		s.outbound = append([]sequencedMessage(nil), s.outbound[remove:]...)
+		// Release every writer waiting for room in the backlog.
+		close(s.drained)
+		s.drained = make(chan struct{})
 	}
 	s.acknowledgedOutbound = sequence
 	s.lastActivity = time.Now()

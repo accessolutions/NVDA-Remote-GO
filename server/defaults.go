@@ -28,18 +28,19 @@ var (
 )
 
 var (
-	DEFAULT_HTTP_RELAY_ENABLED       bool   = false
-	DEFAULT_HTTP_PATH                string = "/remote/http/v1"
-	DEFAULT_HTTP_V2_ENABLED          bool   = false
-	DEFAULT_HTTP_V2_PATH             string = "/remote/http/v2"
-	DEFAULT_HTTP_POLL_WAIT           int    = 25
-	DEFAULT_HTTP_SESSION_TTL         int    = 120
-	DEFAULT_HTTP_STREAM_KEEPALIVE    int    = 15
-	DEFAULT_HTTP_MAX_SESSIONS        int    = 1000
-	DEFAULT_HTTP_MAX_SESSIONS_PER_IP int    = 20
-	DEFAULT_HTTP_MAX_MESSAGE_BYTES   int    = 1 << 20
-	DEFAULT_HTTP_MAX_BATCH_MESSAGES  int    = 32
-	DEFAULT_HTTP_MAX_PENDING_BYTES   int    = 4 << 20
+	DEFAULT_HTTP_RELAY_ENABLED        bool   = false
+	DEFAULT_HTTP_PATH                 string = "/remote/http/v1"
+	DEFAULT_HTTP_V2_ENABLED           bool   = false
+	DEFAULT_HTTP_V2_PATH              string = "/remote/http/v2"
+	DEFAULT_HTTP_POLL_WAIT            int    = 25
+	DEFAULT_HTTP_SESSION_TTL          int    = 120
+	DEFAULT_HTTP_STREAM_KEEPALIVE     int    = 15
+	DEFAULT_HTTP_MAX_SESSIONS         int    = 1000
+	DEFAULT_HTTP_MAX_SESSIONS_PER_IP  int    = 20
+	DEFAULT_HTTP_MAX_MESSAGE_BYTES    int    = 1 << 20
+	DEFAULT_HTTP_MAX_BATCH_MESSAGES   int    = 32
+	DEFAULT_HTTP_MAX_OUTBOUND_BACKLOG int    = 256
+	DEFAULT_HTTP_MAX_PENDING_BYTES    int    = 4 << 20
 )
 
 var (
