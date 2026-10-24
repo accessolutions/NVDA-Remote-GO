@@ -281,5 +281,29 @@ func TestHTTPRelayManagerExpiresInactiveSessions(t *testing.T) {
 	}
 }
 
+// A session whose owner never talks to the relay (no join, no poll, no
+// acknowledgement) must expire even though the relay keeps writing pings to
+// it: server-side writes are not a sign of life.
+func TestHTTPRelayManagerExpiresSessionKeptBusyOnlyByServerWrites(t *testing.T) {
+	config := defaultHTTPRelayConfig()
+	config.sessionTTL = time.Second
+	manager := newHTTPRelayManager(config)
+	session, _, err := manager.create(httpTestAddr("127.0.0.1:1"))
+	if err != nil {
+		t.Fatalf("creating session failed: %v", err)
+	}
+	session.mu.Lock()
+	session.lastActivity = time.Now().Add(-2 * time.Second)
+	session.mu.Unlock()
+	conn := newHTTPConn(session)
+	if err := conn.WriteMessage(ping_msg); err != nil {
+		t.Fatalf("writing the ping failed: %v", err)
+	}
+	manager.expireInactive()
+	if manager.get(session.id) != nil {
+		t.Fatal("a session fed only by server pings was not expired")
+	}
+}
+
 var _ MessageConn = (*httpConn)(nil)
 var _ net.Addr = httpTestAddr("")

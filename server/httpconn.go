@@ -336,7 +336,12 @@ func (s *httpSession) enqueueOutbound(payload []byte) error {
 				payload:  payloadCopy,
 			})
 			s.pendingOutboundBytes += len(payloadCopy)
-			s.lastActivity = time.Now()
+			// Deliberately not refreshing lastActivity: only traffic coming
+			// from the client (messages, acknowledgements, polls, streams)
+			// proves it is still there. The relay writes a ping every
+			// ping_sec seconds, so counting server writes as activity would
+			// keep a session alive forever once its owner has vanished or
+			// never joined.
 			select {
 			case s.notify <- struct{}{}:
 			default:
