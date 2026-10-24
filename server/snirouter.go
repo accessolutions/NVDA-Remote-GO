@@ -310,12 +310,12 @@ func (l *sniListener) Addr() net.Addr {
 // before the handshake, and every other connection reaches the server exactly
 // as it did before.
 func listenTLS(address string, config *tls.Config) (net.Listener, error) {
-	if len(sniRoutes) == 0 {
-		return tls.Listen("tcp", address, config)
-	}
-	base, err := net.Listen("tcp", address)
+	base, err := listenTCP(address)
 	if err != nil {
 		return nil, err
+	}
+	if len(sniRoutes) == 0 {
+		return tls.NewListener(base, config), nil
 	}
 	return tls.NewListener(newSNIListener(base, sniRoutes), config), nil
 }

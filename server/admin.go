@@ -184,7 +184,14 @@ type adminClientInfo struct {
 	Channel     string `json:"channel"`
 	ConnectedAt string `json:"connected_at"`
 	Uptime      string `json:"uptime"`
-	sortKey     time.Time
+	// LastReceived says how long ago the client last sent anything, so that a
+	// connection whose computer has vanished can be told from a living one.
+	LastReceived string `json:"last_received"`
+	// Duplicate is set when another connection shares this one's address, key
+	// and role: most likely the same computer, reconnected while the relay has
+	// not yet noticed that its previous connection is dead.
+	Duplicate bool `json:"duplicate"`
+	sortKey   time.Time
 }
 
 // adminBlockedInfo is the JSON representation of a blocked machine.
@@ -260,6 +267,37 @@ func pad2(n int) string {
 	return strconv.Itoa(n)
 }
 
+// formatLastReceived says how long ago a client last sent anything.
+func formatLastReceived(last, now time.Time) string {
+	if last.IsZero() {
+		return "jamais"
+	}
+	elapsed := now.Sub(last)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	return "il y a " + formatUptime(elapsed)
+}
+
+// duplicateKey groups the connections which most likely come from one computer.
+func duplicateKey(info adminClientInfo) string {
+	return info.IP + "\x00" + info.Channel + "\x00" + info.Role
+}
+
+// markDuplicates flags the connections sharing an address, a key and a role.
+// A connection without a key has not joined anything yet and is left alone.
+func markDuplicates(infos []adminClientInfo) {
+	counts := make(map[string]int, len(infos))
+	for _, info := range infos {
+		if info.Channel != "" {
+			counts[duplicateKey(info)]++
+		}
+	}
+	for i := range infos {
+		infos[i].Duplicate = infos[i].Channel != "" && counts[duplicateKey(infos[i])] > 1
+	}
+}
+
 // buildAdminSnapshot collects the current server state.
 func buildAdminSnapshot() adminSnapshot {
 	list, channelCount := snapshotClients()
@@ -281,11 +319,13 @@ func buildAdminSnapshot() adminSnapshot {
 			Protocol:    c.GetProtocol(),
 			Role:        roleLabel(c.GetConnectionType()),
 			Channel:     channelName,
-			ConnectedAt: connectedAt.Format("2006-01-02 15:04:05"),
-			Uptime:      formatUptime(now.Sub(connectedAt)),
-			sortKey:     connectedAt,
+			ConnectedAt:  connectedAt.Format("2006-01-02 15:04:05"),
+			Uptime:       formatUptime(now.Sub(connectedAt)),
+			LastReceived: formatLastReceived(c.GetLastReceived(), now),
+			sortKey:      connectedAt,
 		})
 	}
+	markDuplicates(infos)
 
 	// Most recently connected clients first.
 	sort.Slice(infos, func(i, j int) bool {
@@ -900,6 +940,8 @@ tr:hover td{background:#1b2534}
 .role-master{color:#4ade80;font-weight:600}
 .role-slave{color:#facc15;font-weight:600}
 .muted{color:#9aa7b4}
+.duplicate{color:#fbbf24;font-weight:600}
+.duplicate-row td{opacity:.75}
 .updated{color:#9aa7b4;font-size:.8rem;margin-top:1rem}
 button.action{padding:.35rem .7rem;border:0;border-radius:6px;font-size:.85rem;cursor:pointer;color:#fff}
 button.action:disabled{opacity:.5;cursor:default}
@@ -938,11 +980,13 @@ h2{font-size:1.1rem;margin:2rem 0 .5rem}
 <th scope="col">Clé d'accès (canal)</th>
 <th scope="col">Connecté depuis</th>
 <th scope="col">Durée</th>
+<th scope="col">Dernier message reçu</th>
 <th scope="col">Action</th>
 </tr>
 </thead>
-<tbody id="clients"><tr><td colspan="10" class="muted">Chargement…</td></tr></tbody>
+<tbody id="clients"><tr><td colspan="11" class="muted">Chargement…</td></tr></tbody>
 </table>
+<p class="muted">Une ligne marquée « doublon probable » partage son adresse, sa clé et son rôle avec une autre : le plus souvent la même machine, reconnectée avant que le serveur ait constaté la fin de sa connexion précédente. Le serveur la retire de lui-même en une minute environ ; sa désactivation bloquerait aussi la connexion vivante.</p>
 <h2 id="blocked-title">Machines bloquées</h2>
 <table aria-labelledby="blocked-title">
 <caption class="muted" style="text-align:left;margin-bottom:.5rem">Le blocage porte sur une adresse IP et une clé d'accès ensemble : les autres machines de la même adresse, sur d'autres clés, ne sont pas concernées. Cliquer sur « Activer » autorise de nouveau la machine à rejoindre cette clé.</caption>
@@ -970,14 +1014,15 @@ function render(d){
 	document.getElementById('stat-cpu').textContent=d.cpu_ok?(d.cpu_pct.toFixed(1)+' %'):'indisponible';
 	document.getElementById('updated').textContent=d.timestamp;
 	var tb=document.getElementById('clients');
-	if(!d.clients||d.clients.length===0){tb.innerHTML='<tr><td colspan="10" class="muted">Aucune connexion active.</td></tr>';}
+	if(!d.clients||d.clients.length===0){tb.innerHTML='<tr><td colspan="11" class="muted">Aucune connexion active.</td></tr>';}
 	else{
 		var rows='';
 		for(var i=0;i<d.clients.length;i++){
 			var c=d.clients[i];
 			var busy=pending['block:'+c.id]?' disabled':'';
-			rows+='<tr>'+
-				'<td>'+esc(c.id)+'</td>'+
+			var dup=c.duplicate?' <span class="duplicate">(doublon probable)</span>':'';
+			rows+='<tr'+(c.duplicate?' class="duplicate-row"':'')+'>'+
+				'<td>'+esc(c.id)+dup+'</td>'+
 				'<td>'+esc(c.ip)+'</td>'+
 				'<td>'+esc(c.location)+'</td>'+
 				'<td>'+esc(c.port)+'</td>'+
@@ -986,6 +1031,7 @@ function render(d){
 				'<td>'+esc(c.channel)+'</td>'+
 				'<td>'+esc(c.connected_at)+'</td>'+
 				'<td>'+esc(c.uptime)+'</td>'+
+				'<td>'+esc(c.last_received)+'</td>'+
 				'<td><button type="button" class="action block" data-action="block" data-id="'+esc(c.id)+'" data-ip="'+esc(c.ip)+'" data-channel="'+esc(c.channel)+'" aria-label="Désactiver la connexion '+esc(c.id)+' depuis '+esc(c.ip)+(c.channel?' sur la clé '+esc(c.channel):' (aucune clé)')+'"'+busy+'>Désactiver</button></td>'+
 			'</tr>';
 		}

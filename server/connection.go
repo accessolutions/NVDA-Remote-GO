@@ -76,7 +76,7 @@ func (s *Server) Listen() error {
 	address := s.address
 	s.Unlock()
 	if config == nil {
-		listener, err = net.Listen("tcp", address)
+		listener, err = listenTCP(address)
 	} else {
 		listener, err = listenTLS(address, config)
 	}

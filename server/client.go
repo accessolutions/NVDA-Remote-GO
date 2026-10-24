@@ -11,7 +11,10 @@ import (
 
 var ping_msg = []byte(`{"type":"ping"}`)
 
-const ping_sec int = 120
+// A ping every 30 seconds costs sixteen bytes and gives a vanished client a
+// chance to be noticed quickly: its acknowledgement never comes, and the dead
+// peer timeout of the connection fails the write. See listen.go.
+const ping_sec int = 30
 
 const write_sec int = 8
 
@@ -26,6 +29,7 @@ type Client struct {
 	port              int
 	protocol          string
 	connectedAt       time.Time
+	lastReceived      time.Time
 	c                 *ClientChannel
 	auth              bool
 	ctx               context.Context
@@ -117,6 +121,20 @@ func (c *Client) GetConnectedAt() time.Time {
 	defer c.Unlock()
 	c.Lock()
 	return c.connectedAt
+}
+
+// GetLastReceived returns when the client last sent anything, or the zero time
+// when nothing has been received yet.
+func (c *Client) GetLastReceived() time.Time {
+	defer c.Unlock()
+	c.Lock()
+	return c.lastReceived
+}
+
+func (c *Client) markReceived() {
+	defer c.Unlock()
+	c.Lock()
+	c.lastReceived = time.Now()
 }
 
 func (c *Client) GetVersion() int {
@@ -242,6 +260,7 @@ func (c *Client) listen() {
 			msl.Unlock()
 			return
 		}
+		c.markReceived()
 		if len(message) == 0 {
 			Log(LOG_DEBUG, "Received empty message from client "+idstr)
 			continue
