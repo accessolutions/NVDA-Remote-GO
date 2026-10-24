@@ -126,6 +126,11 @@ func (s *Server) accept(listener net.Listener) {
 			s.Stop()
 			break
 		}
+		if reason := connectionRefusal(getIP(conn)); reason != "" {
+			logRefusedConnection(getIP(conn), "tcp", reason)
+			conn.Close()
+			continue
+		}
 		client := s.newRawClient(conn, nil)
 		go client.listen()
 	}

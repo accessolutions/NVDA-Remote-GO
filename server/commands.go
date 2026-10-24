@@ -62,6 +62,15 @@ func init() {
 			}
 		}
 
+		// Blocks decided from the dashboard apply to one address on one channel, so
+		// they can only be checked here, once the channel is known. The connection is
+		// closed rather than answered: a blocked machine has nothing more to say.
+		if reason := joinRefusal(c.GetIP(), db.Channel); reason != "" {
+			Log(LOG_CONNECTION, "Client "+strconv.Itoa(c.GetID())+" was refused: "+reason+".")
+			c.Close()
+			return
+		}
+
 		c.SetConnectionType(db.ConnectionType)
 		cc := FindChannel(db.Channel)
 		if cc != nil {

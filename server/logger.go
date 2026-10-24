@@ -21,13 +21,27 @@ func Log(level int, msg ...interface{}) {
 	}
 	ll.Lock()
 	defer ll.Unlock()
+	ensureLoggers()
 	log_standard.Println(msg...)
 }
 
 func Log_error(msg ...interface{}) {
 	ll.Lock()
 	defer ll.Unlock()
+	ensureLoggers()
 	log_error.Println(msg...)
+}
+
+// ensureLoggers falls back to the console when a message is logged before
+// log_init ran, which happens in tests and during early configuration errors.
+// The caller must hold ll.
+func ensureLoggers() {
+	if log_standard == nil {
+		log_standard = log.New(os.Stdout, "", log.LstdFlags)
+	}
+	if log_error == nil {
+		log_error = log.New(os.Stderr, "[ERROR]: ", log.LstdFlags)
+	}
 }
 
 func log_init(file string) {

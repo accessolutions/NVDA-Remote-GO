@@ -120,6 +120,13 @@ func (p *protocolListener) classify(conn net.Conn) {
 		return
 	}
 	if first[0] == rawProtocolPrefix {
+		// WebSocket and HTTPS connections are checked by their own handlers, once
+		// the request is known. The raw protocol has no request, so it is checked here.
+		if reason := connectionRefusal(getIP(conn)); reason != "" {
+			logRefusedConnection(getIP(conn), "tcp", reason)
+			conn.Close()
+			return
+		}
 		client := p.s.newRawClient(conn, reader)
 		go client.listen()
 		return

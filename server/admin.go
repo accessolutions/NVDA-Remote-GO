@@ -187,19 +187,45 @@ type adminClientInfo struct {
 	sortKey     time.Time
 }
 
+// adminBlockedInfo is the JSON representation of a blocked machine.
+type adminBlockedInfo struct {
+	IP        string `json:"ip"`
+	Location  string `json:"location"`
+	ClientID  int    `json:"client_id"`
+	Channel   string `json:"channel"`
+	BlockedAt string `json:"blocked_at"`
+}
+
 // adminSnapshot is the JSON payload sent to the dashboard.
 type adminSnapshot struct {
-	Connected  int               `json:"connected"`
-	Channels   int               `json:"channels"`
-	Goroutines int               `json:"goroutines"`
-	MemAllocMB float64           `json:"mem_alloc_mb"`
-	MemSysMB   float64           `json:"mem_sys_mb"`
-	MemUsedPct float64           `json:"mem_used_pct"`
-	MemUsedOK  bool              `json:"mem_used_ok"`
-	CPUPct     float64           `json:"cpu_pct"`
-	CPUOK      bool              `json:"cpu_ok"`
-	Timestamp  string            `json:"timestamp"`
-	Clients    []adminClientInfo `json:"clients"`
+	Connected  int                `json:"connected"`
+	Channels   int                `json:"channels"`
+	Goroutines int                `json:"goroutines"`
+	MemAllocMB float64            `json:"mem_alloc_mb"`
+	MemSysMB   float64            `json:"mem_sys_mb"`
+	MemUsedPct float64            `json:"mem_used_pct"`
+	MemUsedOK  bool               `json:"mem_used_ok"`
+	CPUPct     float64            `json:"cpu_pct"`
+	CPUOK      bool               `json:"cpu_ok"`
+	Timestamp  string             `json:"timestamp"`
+	Clients    []adminClientInfo  `json:"clients"`
+	Blocked    []adminBlockedInfo `json:"blocked"`
+}
+
+// buildBlockedInfos lists the blocked machines for the dashboard.
+func buildBlockedInfos() []adminBlockedInfo {
+	entries := blockedClients()
+	infos := make([]adminBlockedInfo, 0, len(entries))
+	for _, entry := range entries {
+		infos = append(infos, adminBlockedInfo{
+			IP:        entry.IP,
+			Location:  geoLocationForIP(entry.IP),
+			ClientID:  entry.ClientID,
+			Channel:   entry.Channel,
+			BlockedAt: entry.BlockedAt.Format("2006-01-02 15:04:05"),
+		})
+	}
+	return infos
 }
 
 func roleLabel(connectionType string) string {
@@ -284,6 +310,7 @@ func buildAdminSnapshot() adminSnapshot {
 		CPUOK:      cpuOK,
 		Timestamp:  now.Format("2006-01-02 15:04:05"),
 		Clients:    infos,
+		Blocked:    buildBlockedInfos(),
 	}
 }
 
@@ -483,11 +510,109 @@ func registerAdminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(base+"/events", handleAdminEvents)
 	mux.HandleFunc(base+"/history", handleAdminHistory)
 	mux.HandleFunc(base+"/history/day", handleAdminHistoryDay)
+	mux.HandleFunc(base+"/clients/block", handleAdminBlockClient)
+	mux.HandleFunc(base+"/clients/unblock", handleAdminUnblockClient)
 	if adminPasswordDefined() {
 		Log(LOG_INFO, "Admin dashboard enabled at "+base+" (user: "+AdminUsername+")")
 	} else {
-		Log(LOG_INFO, "Admin dashboard enabled at "+base+" (user: "+AdminUsername+") - password not set yet, define it at "+base+"/setup on first connection")
+		Log(LOG_INFO, "Admin dashboard enabled at "+base+" (user: "+AdminUsername+") - password not set yet, define it at "+base+"/setup on first connection. NVDA Remote connections are refused until then.")
 	}
+}
+
+// adminActionAuthorized checks a state-changing request from the dashboard. The
+// session cookie is SameSite=Strict, and the browser headers are checked too, so a
+// page on another site cannot cut connections through the administrator's browser.
+func adminActionAuthorized(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return false
+	}
+	if !adminRequestAuthorized(r) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return false
+	}
+	if origin := r.Header.Get("Origin"); origin != "" {
+		// The dashboard is only served over TLS, and r.TLS cannot be trusted here:
+		// it is nil when the connection went through the protocol detector.
+		expected := "https://" + r.Host
+		if !strings.EqualFold(origin, expected) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return false
+		}
+	}
+	return true
+}
+
+func writeAdminJSON(w http.ResponseWriter, status int, value interface{}) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+// handleAdminBlockClient cuts one connection and blocks its address.
+func handleAdminBlockClient(w http.ResponseWriter, r *http.Request) {
+	if !adminActionAuthorized(w, r) {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		writeAdminJSON(w, http.StatusBadRequest, map[string]string{"error": "Requête invalide."})
+		return
+	}
+	id, err := strconv.Atoi(strings.TrimSpace(r.PostFormValue("id")))
+	if err != nil || id <= 0 {
+		writeAdminJSON(w, http.StatusBadRequest, map[string]string{"error": "Identifiant de connexion invalide."})
+		return
+	}
+	entry, blocked, err := blockClientByID(id)
+	if err != nil {
+		writeAdminJSON(w, http.StatusNotFound, map[string]string{"error": "Cette connexion n'existe plus."})
+		return
+	}
+	msg := "Connexion " + strconv.Itoa(entry.ClientID) + " coupée. L'adresse " + entry.IP + " ne peut plus rejoindre le canal " + entry.Channel + "."
+	if !blocked {
+		msg = "Connexion " + strconv.Itoa(entry.ClientID) + " coupée. Elle n'avait rejoint aucun canal, rien n'a été bloqué."
+	}
+	writeAdminJSON(w, http.StatusOK, map[string]interface{}{
+		"ok":      true,
+		"ip":      entry.IP,
+		"channel": entry.Channel,
+		"id":      entry.ClientID,
+		"blocked": blocked,
+		"msg":     msg,
+	})
+}
+
+// handleAdminUnblockClient lifts the block on an address for one channel.
+func handleAdminUnblockClient(w http.ResponseWriter, r *http.Request) {
+	if !adminActionAuthorized(w, r) {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		writeAdminJSON(w, http.StatusBadRequest, map[string]string{"error": "Requête invalide."})
+		return
+	}
+	ip := strings.TrimSpace(r.PostFormValue("ip"))
+	channel := strings.TrimSpace(r.PostFormValue("channel"))
+	if ip == "" || channel == "" {
+		writeAdminJSON(w, http.StatusBadRequest, map[string]string{"error": "Adresse ou canal manquant."})
+		return
+	}
+	if !unblock(ip, channel) {
+		writeAdminJSON(w, http.StatusNotFound, map[string]string{"error": "Cette adresse n'est pas bloquée sur ce canal."})
+		return
+	}
+	writeAdminJSON(w, http.StatusOK, map[string]interface{}{
+		"ok":      true,
+		"ip":      ip,
+		"channel": channel,
+		"msg":     "L'adresse " + ip + " peut de nouveau rejoindre le canal " + channel + ".",
+	})
 }
 
 func handleAdminDashboard(w http.ResponseWriter, r *http.Request) {
@@ -776,6 +901,17 @@ tr:hover td{background:#1b2534}
 .role-slave{color:#facc15;font-weight:600}
 .muted{color:#9aa7b4}
 .updated{color:#9aa7b4;font-size:.8rem;margin-top:1rem}
+button.action{padding:.35rem .7rem;border:0;border-radius:6px;font-size:.85rem;cursor:pointer;color:#fff}
+button.action:disabled{opacity:.5;cursor:default}
+button.block{background:#b91c1c}
+button.block:hover{background:#991b1b}
+button.unblock{background:#15803d}
+button.unblock:hover{background:#166534}
+button.action:focus-visible{outline:3px solid #93c5fd;outline-offset:2px}
+.status{min-height:1.5rem;margin:1rem 0;padding:.6rem .95rem;border-radius:8px;background:#161f2b;color:#e6edf3}
+.status:empty{display:none}
+.status.error{color:#fca5a5}
+h2{font-size:1.1rem;margin:2rem 0 .5rem}
 </style>
 </head>
 <body>
@@ -788,6 +924,7 @@ tr:hover td{background:#1b2534}
 <p class="stat-line"><span class="label">Pourcentage de mémoire utilisée :</span><span class="value" id="stat-mem">-</span></p>
 <p class="stat-line"><span class="label">Processeur :</span><span class="value" id="stat-cpu">-</span></p>
 </section>
+<p class="status" id="status" role="status" aria-live="polite"></p>
 <table>
 <caption class="muted" style="text-align:left;margin-bottom:.5rem">Connexions actives (les plus récentes en haut)</caption>
 <thead>
@@ -801,38 +938,103 @@ tr:hover td{background:#1b2534}
 <th scope="col">Clé d'accès (canal)</th>
 <th scope="col">Connecté depuis</th>
 <th scope="col">Durée</th>
+<th scope="col">Action</th>
 </tr>
 </thead>
-<tbody id="clients"><tr><td colspan="9" class="muted">Chargement…</td></tr></tbody>
+<tbody id="clients"><tr><td colspan="10" class="muted">Chargement…</td></tr></tbody>
+</table>
+<h2 id="blocked-title">Machines bloquées</h2>
+<table aria-labelledby="blocked-title">
+<caption class="muted" style="text-align:left;margin-bottom:.5rem">Le blocage porte sur une adresse IP et une clé d'accès ensemble : les autres machines de la même adresse, sur d'autres clés, ne sont pas concernées. Cliquer sur « Activer » autorise de nouveau la machine à rejoindre cette clé.</caption>
+<thead>
+<tr>
+<th scope="col">Adresse IP</th>
+<th scope="col">Clé d'accès (canal)</th>
+<th scope="col">Localisation</th>
+<th scope="col">Connexion coupée (ID)</th>
+<th scope="col">Bloquée le</th>
+<th scope="col">Action</th>
+</tr>
+</thead>
+<tbody id="blocked"><tr><td colspan="6" class="muted">Chargement…</td></tr></tbody>
 </table>
 <p class="updated">Dernière mise à jour : <span id="updated">-</span></p>
 <script>
 function esc(s){var d=document.createElement('div');d.textContent=s==null?'':s;return d.innerHTML;}
 function roleClass(r){return r==='master'?'role-master':(r==='slave'?'role-slave':'muted');}
+var pending={};
+function setStatus(msg,isError){var p=document.getElementById('status');p.textContent=msg||'';p.className='status'+(isError?' error':'');}
 function render(d){
 	document.getElementById('stat-connected').textContent=d.connected;
 	document.getElementById('stat-mem').textContent=d.mem_used_ok?(d.mem_used_pct.toFixed(1)+' %'):'indisponible';
 	document.getElementById('stat-cpu').textContent=d.cpu_ok?(d.cpu_pct.toFixed(1)+' %'):'indisponible';
 	document.getElementById('updated').textContent=d.timestamp;
 	var tb=document.getElementById('clients');
-	if(!d.clients||d.clients.length===0){tb.innerHTML='<tr><td colspan="9" class="muted">Aucune connexion active.</td></tr>';return;}
-	var rows='';
-	for(var i=0;i<d.clients.length;i++){
-		var c=d.clients[i];
-		rows+='<tr>'+
-			'<td>'+esc(c.id)+'</td>'+
-			'<td>'+esc(c.ip)+'</td>'+
-			'<td>'+esc(c.location)+'</td>'+
-			'<td>'+esc(c.port)+'</td>'+
-			'<td>'+esc(c.protocol)+'</td>'+
-			'<td class="'+roleClass(c.role)+'">'+esc(c.role)+'</td>'+
-			'<td>'+esc(c.channel)+'</td>'+
-			'<td>'+esc(c.connected_at)+'</td>'+
-			'<td>'+esc(c.uptime)+'</td>'+
-		'</tr>';
+	if(!d.clients||d.clients.length===0){tb.innerHTML='<tr><td colspan="10" class="muted">Aucune connexion active.</td></tr>';}
+	else{
+		var rows='';
+		for(var i=0;i<d.clients.length;i++){
+			var c=d.clients[i];
+			var busy=pending['block:'+c.id]?' disabled':'';
+			rows+='<tr>'+
+				'<td>'+esc(c.id)+'</td>'+
+				'<td>'+esc(c.ip)+'</td>'+
+				'<td>'+esc(c.location)+'</td>'+
+				'<td>'+esc(c.port)+'</td>'+
+				'<td>'+esc(c.protocol)+'</td>'+
+				'<td class="'+roleClass(c.role)+'">'+esc(c.role)+'</td>'+
+				'<td>'+esc(c.channel)+'</td>'+
+				'<td>'+esc(c.connected_at)+'</td>'+
+				'<td>'+esc(c.uptime)+'</td>'+
+				'<td><button type="button" class="action block" data-action="block" data-id="'+esc(c.id)+'" data-ip="'+esc(c.ip)+'" data-channel="'+esc(c.channel)+'" aria-label="Désactiver la connexion '+esc(c.id)+' depuis '+esc(c.ip)+(c.channel?' sur la clé '+esc(c.channel):' (aucune clé)')+'"'+busy+'>Désactiver</button></td>'+
+			'</tr>';
+		}
+		tb.innerHTML=rows;
 	}
-	tb.innerHTML=rows;
+	var bb=document.getElementById('blocked');
+	if(!d.blocked||d.blocked.length===0){bb.innerHTML='<tr><td colspan="6" class="muted">Aucune machine bloquée.</td></tr>';}
+	else{
+		var brows='';
+		for(var j=0;j<d.blocked.length;j++){
+			var b=d.blocked[j];
+			var bkey=b.ip+'|'+b.channel;
+			var bbusy=pending['unblock:'+bkey]?' disabled':'';
+			brows+='<tr>'+
+				'<td>'+esc(b.ip)+'</td>'+
+				'<td>'+esc(b.channel)+'</td>'+
+				'<td>'+esc(b.location)+'</td>'+
+				'<td>'+esc(b.client_id)+'</td>'+
+				'<td>'+esc(b.blocked_at)+'</td>'+
+				'<td><button type="button" class="action unblock" data-action="unblock" data-ip="'+esc(b.ip)+'" data-channel="'+esc(b.channel)+'" aria-label="Activer de nouveau la machine '+esc(b.ip)+' sur la clé '+esc(b.channel)+'"'+bbusy+'>Activer</button></td>'+
+			'</tr>';
+		}
+		bb.innerHTML=brows;
+	}
 }
+function act(action,key,body){
+	if(pending[action+':'+key]){return;}
+	pending[action+':'+key]=true;
+	fetch('ADMINPATH/clients/'+action,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body})
+	.then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
+	.then(function(res){setStatus(res.ok?res.j.msg:(res.j.error||'Erreur.'),!res.ok);})
+	.catch(function(){setStatus('Le serveur n\'a pas répondu.',true);})
+	.then(function(){delete pending[action+':'+key];});
+}
+document.addEventListener('click',function(e){
+	var btn=e.target.closest('button[data-action]');
+	if(!btn){return;}
+	if(btn.getAttribute('data-action')==='block'){
+		var id=btn.getAttribute('data-id'),ip=btn.getAttribute('data-ip'),ch=btn.getAttribute('data-channel');
+		var q=ch?('Couper la connexion '+id+' et interdire à l\'adresse '+ip+' de rejoindre la clé '+ch+' ?'):('Couper la connexion '+id+' depuis '+ip+' ? Elle n\'a rejoint aucune clé, rien ne sera bloqué.');
+		if(!window.confirm(q)){return;}
+		btn.disabled=true;
+		act('block',id,'id='+encodeURIComponent(id));
+	}else{
+		var bip=btn.getAttribute('data-ip'),bch=btn.getAttribute('data-channel');
+		btn.disabled=true;
+		act('unblock',bip+'|'+bch,'ip='+encodeURIComponent(bip)+'&channel='+encodeURIComponent(bch));
+	}
+});
 var es=new EventSource('ADMINPATH/events');
 es.onmessage=function(e){try{render(JSON.parse(e.data));}catch(err){}};
 </script>

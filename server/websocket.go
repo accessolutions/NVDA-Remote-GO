@@ -117,6 +117,13 @@ func (s *Server) listenWebSocket() error {
 
 // handleWebSocket upgrades an incoming request and registers it as a client.
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	ip := getIPFromAddr(httpRemoteAddr(r.RemoteAddr))
+	if reason := connectionRefusal(ip); reason != "" {
+		logRefusedConnection(ip, "websocket", reason)
+		w.Header().Set("Cache-Control", "no-store")
+		http.Error(w, "Service unavailable: "+reason, http.StatusServiceUnavailable)
+		return
+	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		Log(LOG_DEBUG, "Error upgrading WebSocket connection.\r\n"+err.Error())

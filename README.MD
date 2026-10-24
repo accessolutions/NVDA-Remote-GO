@@ -136,7 +136,7 @@ The included certificate file is a single file that contains an automatically ge
 # Usage
 
 ```console
-$ nvdaRemoteServer [-pid-file /path/to/pid/file] [-conf-file /path/to/configuration/file] [-conf-read=true] [-gen-conf-file /path/to/generated/configuration/file] [-gen-conf-dir=false] [-create=false] [-address :6837] [-ws-address :443] [-ws-path /] [-ws-raw=true] [-http-relay=false] [-http-path /remote/http/v1] [-http-v2=false] [-http-v2-path /remote/http/v2] [-http-stream-keepalive 15] [-http-poll-wait 25] [-http-session-ttl 120] [-http-max-sessions 1000] [-http-max-sessions-per-ip 20] [-http-max-message-bytes 1048576] [-http-max-batch-messages 32] [-http-max-pending-bytes 4194304] [-sni-route turn.example.com=127.0.0.1:5349] [-cert-file /path/to/ssl/certificate] [-key-file /path/to/ssl/key] [-gen-cert-file /path/to/created/cert/file] [-motd "Example message of the day."] [-motd-always-display=false] [-send-origin=true] [-screen-share=false] [-turn-url stun:turn.example.com:3478] [-turn-secret secret] [-turn-secret-file /path/to/turn/secret] [-turn-ttl 3600] [-log-level=0] [-log-file /path/to/log/file] [-admin=false] [-admin-path /admin] [-admin-data-file /data/admin-history.db] [-geoip-api-url https://ipwho.is] [-launch=true]
+$ nvdaRemoteServer [-pid-file /path/to/pid/file] [-conf-file /path/to/configuration/file] [-conf-read=true] [-gen-conf-file /path/to/generated/configuration/file] [-gen-conf-dir=false] [-create=false] [-address :6837] [-ws-address :443] [-ws-path /] [-ws-raw=true] [-http-relay=false] [-http-path /remote/http/v1] [-http-v2=false] [-http-v2-path /remote/http/v2] [-http-stream-keepalive 15] [-http-poll-wait 25] [-http-session-ttl 120] [-http-max-sessions 1000] [-http-max-sessions-per-ip 20] [-http-max-message-bytes 1048576] [-http-max-batch-messages 32] [-http-max-pending-bytes 4194304] [-sni-route turn.example.com=127.0.0.1:5349] [-cert-file /path/to/ssl/certificate] [-key-file /path/to/ssl/key] [-gen-cert-file /path/to/created/cert/file] [-motd "Example message of the day."] [-motd-always-display=false] [-send-origin=true] [-screen-share=false] [-turn-url stun:turn.example.com:3478] [-turn-secret secret] [-turn-secret-file /path/to/turn/secret] [-turn-ttl 3600] [-log-level=0] [-log-file /path/to/log/file] [-admin=true] [-admin-path /admin] [-admin-data-file /data/admin-history.db] [-geoip-api-url https://ipwho.is] [-launch=true]
 ```
 
 Please note that the brackets around a parameter indicate that it is optional.
@@ -421,7 +421,11 @@ By default, the server will attempt to launch itself if nothing has caused it to
 
 #### `-admin`
 
-Enable the web administration dashboard. The dashboard is served by the secure WebSocket listener and is available at `/admin` by default. The fixed username is `administrator`; the password is defined during the first connection and can be persisted with `-admin-password-file`.
+The web administration dashboard. It is always enabled: the server refuses to start with `-admin=false`, and it requires at least one `-ws-address`, since the dashboard is served by the secure WebSocket listener. It is available at `/admin` by default. The fixed username is `administrator`; the password is defined during the first connection and can be persisted with `-admin-password-file`.
+
+**Until the administrator password has been defined, the server refuses every NVDA Remote connection** on every listener (historic TCP protocol, WebSocket and HTTPS relay). Only the dashboard answers, so that a freshly installed server cannot be used before anyone is able to supervise it. Each refusal is logged at log level 1. Define the password once at `/admin/setup`, and use `-admin-password-file` on a persistent volume so it survives restarts.
+
+The dashboard lists the active connections with a **Désactiver** button on each row. The button cuts that connection and blocks its IP address **on its channel only**: the same address can no longer join that channel, while other connections from the same address, on other channels, are left untouched and can keep connecting. This matters because several machines behind one NAT share a public address, each with its own channel key. A connection which has not joined a channel yet is only cut, nothing is blocked. Blocks are enforced when a client sends `join`, listed in the **Machines bloquées** section below the table with the address, the channel, the identifier of the connection that was cut and the time, and lifted with **Activer**. They are stored in the administration database (`-admin-data-file`) and survive restarts.
 
 
 #### `-admin-path`
@@ -432,7 +436,8 @@ Change the URL path of the web administration dashboard. The default path is `/a
 #### `-admin-data-file`
 
 Path to the SQLite database used by the administration history. The database
-contains the connection sessions and periodic resource measurements. If this
+contains the connection sessions, periodic resource measurements and the list
+of addresses blocked from the dashboard. If this
 parameter is empty, the server stores `admin-history.db` next to the admin
 password file, or in the current directory when no password file is used.
 Use a persistent volume when running in Docker. There is no automatic data

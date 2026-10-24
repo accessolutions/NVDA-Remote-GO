@@ -141,6 +141,9 @@ func (s *Server) handleHTTPCreateSession(w http.ResponseWriter, r *http.Request)
 		writeHTTPRelayError(w, http.StatusBadRequest, "invalid_protocol", "Unsupported HTTP relay protocol")
 		return
 	}
+	if !httpRelayConnectionAllowed(w, r) {
+		return
+	}
 	manager := s.httpRelay()
 	session, token, err := manager.create(httpRemoteAddr(r.RemoteAddr))
 	if err != nil {
@@ -158,6 +161,20 @@ func (s *Server) handleHTTPCreateSession(w http.ResponseWriter, r *http.Request)
 		MaxBatchMessages: config.maxBatchMessages,
 		MaxMessageBytes:  config.maxMessageBytes,
 	})
+}
+
+// httpRelayConnectionAllowed applies the server-wide admission rules to a session
+// creation request. It writes the refusal itself and reports whether the caller
+// may go on.
+func httpRelayConnectionAllowed(w http.ResponseWriter, r *http.Request) bool {
+	ip := getIPFromAddr(httpRemoteAddr(r.RemoteAddr))
+	reason := connectionRefusal(ip)
+	if reason == "" {
+		return true
+	}
+	logRefusedConnection(ip, "https", reason)
+	writeHTTPRelayError(w, http.StatusServiceUnavailable, "connection_refused", "The server refused the connection: "+reason)
+	return false
 }
 
 func (s *Server) handleHTTPSession(w http.ResponseWriter, r *http.Request) {

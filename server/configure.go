@@ -140,7 +140,7 @@ func Configure() error {
 
 	flag.BoolVar(&Launch, "launch", DEFAULT_LAUNCH, "Launch the server.")
 
-	flag.BoolVar(&adminEnabled, "admin", DEFAULT_ADMIN, "Enable the web administration dashboard. The login is fixed to \"administrator\" and the password is defined on the first connection to the dashboard. The dashboard requires a WebSocket listener (-ws-address) to be reachable.")
+	flag.BoolVar(&adminEnabled, "admin", DEFAULT_ADMIN, "The web administration dashboard. It is always enabled and cannot be turned off: the server refuses to start with -admin=false. The login is fixed to \"administrator\" and the password is defined on the first connection to the dashboard. Until it is defined, every NVDA Remote connection is refused. The dashboard requires a WebSocket listener (-ws-address).")
 	flag.StringVar(&adminPasswordFile, "admin-password-file", DEFAULT_ADMIN_PASSWORD_FILE, "Path to the file used to store the bcrypt-hashed admin password so it survives restarts. If empty, the password is kept in memory only and must be set again after each restart. Use a path on a persistent volume when running in a container.")
 	flag.StringVar(&adminPath, "admin-path", DEFAULT_ADMIN_PATH, "URL path on which the web administration dashboard is served, such as \"/admin\".")
 	flag.StringVar(&adminDataFile, "admin-data-file", DEFAULT_ADMIN_DATA_FILE, "Path to the SQLite file used to store the administration history. If empty, it is stored next to -admin-password-file, or in the current directory.")
@@ -162,10 +162,6 @@ func Configure() error {
 		return err
 	}
 
-	if AdminEnabled() && len(wsAddresses) == 0 {
-		Log(LOG_INFO, "Warning: admin dashboard is enabled but no WebSocket listener (-ws-address) is configured, so the dashboard will not be reachable.")
-	}
-
 	c := cfg_default()
 	cfg_err := c.Setup()
 
@@ -182,15 +178,24 @@ func Configure() error {
 		Log_close()
 		os.Exit(1)
 	}
-	if AdminEnabled() {
-		if adminDataFile == "" {
-			if adminPasswordFile != "" {
-				adminDataFile = filepath.Join(filepath.Dir(adminPasswordFile), "admin-history.db")
-			} else {
-				adminDataFile = "admin-history.db"
-			}
+	if err := validateAdminConfiguration(adminEnabled, len(wsAddresses)); err != nil {
+		Log_error(err.Error() + "\r\nUnable to start server.")
+		Launch_fail()
+		return err
+	}
+	if adminDataFile == "" {
+		if adminPasswordFile != "" {
+			adminDataFile = filepath.Join(filepath.Dir(adminPasswordFile), "admin-history.db")
+		} else {
+			adminDataFile = "admin-history.db"
 		}
-		startAdminHistory()
+	}
+	// The password and the block list decide which clients are accepted, so both
+	// must be known before the first listener opens, not when the dashboard is served.
+	loadAdminPassword()
+	startAdminHistory()
+	if !adminPasswordDefined() {
+		Log(LOG_INFO, "The administration password is not defined yet. NVDA Remote connections will be refused until it is set at "+adminPath+"/setup.")
 	}
 
 	if !screenShare && (len(turnUrls) > 0 || !default_turn_secret(turnSecret) || !default_turn_secret_file(turnSecretFile)) {
@@ -372,6 +377,19 @@ func httpRelayConfigFromFlags() httpRelayConfig {
 		maxPendingBytes:    httpMaxPendingBytes,
 		streamKeepalive:    time.Duration(httpStreamKeepalive) * time.Second,
 	}
+}
+
+// validateAdminConfiguration enforces that the administration dashboard is on and
+// reachable. The server is supervised through it, and it is the only place where
+// the first-run password is defined, so a server without it would accept nobody.
+func validateAdminConfiguration(enabled bool, websocketAddressCount int) error {
+	if !enabled {
+		return errors.New("the administration dashboard cannot be disabled: remove -admin=false")
+	}
+	if websocketAddressCount == 0 {
+		return errors.New("the administration dashboard requires at least one -ws-address, such as -ws-address :443")
+	}
+	return nil
 }
 
 func validateHTTPRelayConfiguration(enabled bool, path string, v2Enabled bool, v2Path, administrationPath string, websocketAddressCount int, config httpRelayConfig) error {

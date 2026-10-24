@@ -61,9 +61,65 @@ func startAdminHistory() {
 	adminHistoryState.store = store
 	adminHistoryState.Unlock()
 
+	// The block list must be known before the first client is accepted, so it
+	// is loaded synchronously here rather than on first use.
+	blocked, err := store.loadBlockedClients()
+	if err != nil {
+		Log(LOG_INFO, "Warning: unable to load the list of blocked addresses: "+err.Error())
+	} else {
+		replaceBlockList(blocked)
+		if len(blocked) > 0 {
+			Log(LOG_INFO, strconv.Itoa(len(blocked))+" address(es) blocked by the administrator were loaded.")
+		}
+	}
+
 	store.sampleNow()
 	go store.sampleLoop()
 	Log(LOG_INFO, "Administration history stored in "+path)
+}
+
+func (s *adminHistoryStore) loadBlockedClients() ([]blockedClient, error) {
+	rows, err := s.db.Query(`SELECT ip, channel, client_id, blocked_at FROM blocked_channels`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []blockedClient
+	for rows.Next() {
+		var entry blockedClient
+		var blockedAt int64
+		if err := rows.Scan(&entry.IP, &entry.Channel, &entry.ClientID, &blockedAt); err != nil {
+			return nil, err
+		}
+		entry.BlockedAt = time.Unix(0, blockedAt)
+		list = append(list, entry)
+	}
+	return list, rows.Err()
+}
+
+// storeBlockedClient persists a block so it survives a restart. Without an
+// administration history the block only lives in memory, which is reported.
+func storeBlockedClient(entry blockedClient) {
+	store := currentAdminHistory()
+	if store == nil {
+		Log(LOG_INFO, "Warning: the block on "+entry.IP+" for channel "+entry.Channel+" is kept in memory only, since the administration history is unavailable.")
+		return
+	}
+	if _, err := store.db.Exec(`
+INSERT OR REPLACE INTO blocked_channels (ip, channel, client_id, blocked_at)
+VALUES (?, ?, ?, ?)`, entry.IP, entry.Channel, entry.ClientID, entry.BlockedAt.UTC().UnixNano()); err != nil {
+		Log(LOG_INFO, "Warning: unable to store the block on "+entry.IP+" for channel "+entry.Channel+": "+err.Error())
+	}
+}
+
+func deleteBlockedClient(ip, channel string) {
+	store := currentAdminHistory()
+	if store == nil {
+		return
+	}
+	if _, err := store.db.Exec(`DELETE FROM blocked_channels WHERE ip = ? AND channel = ?`, ip, channel); err != nil {
+		Log(LOG_INFO, "Warning: unable to remove the stored block on "+ip+" for channel "+channel+": "+err.Error())
+	}
 }
 
 func currentAdminHistory() *adminHistoryStore {
@@ -116,6 +172,16 @@ CREATE TABLE IF NOT EXISTS resource_samples (
 	process_cpu_pct REAL,
 	memory_used_pct REAL,
 	process_memory_mb REAL
+)`); err != nil {
+		return closeWithError(err)
+	}
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS blocked_channels (
+	ip TEXT NOT NULL,
+	channel TEXT NOT NULL,
+	client_id INTEGER NOT NULL,
+	blocked_at INTEGER NOT NULL,
+	PRIMARY KEY (ip, channel)
 )`); err != nil {
 		return closeWithError(err)
 	}

@@ -84,7 +84,7 @@ var DEFAULT_LAUNCH bool = true
 var DEFAULT_PID_FILE string = ""
 
 var (
-	DEFAULT_ADMIN               bool   = false
+	DEFAULT_ADMIN               bool   = true
 	DEFAULT_ADMIN_PASSWORD_FILE string = ""
 	DEFAULT_ADMIN_PATH          string = "/admin"
 	DEFAULT_ADMIN_DATA_FILE     string = ""

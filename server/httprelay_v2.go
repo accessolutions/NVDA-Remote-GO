@@ -50,6 +50,9 @@ func (s *Server) handleHTTPCreateSessionV2(w http.ResponseWriter, r *http.Reques
 		writeHTTPRelayError(w, http.StatusBadRequest, "invalid_protocol", "Unsupported HTTP relay protocol")
 		return
 	}
+	if !httpRelayConnectionAllowed(w, r) {
+		return
+	}
 	manager := s.httpRelay()
 	session, token, err := manager.create(httpRemoteAddr(r.RemoteAddr))
 	if err != nil {
